@@ -1,0 +1,142 @@
+{
+  "classes": [
+    {
+      "name": "Instance",
+      "properties": [
+        {"name": "Name", "type": "string"},
+        {"name": "ClassName", "type": "string", "tags": ["ReadOnly"]},
+        {"name": "Parent", "type": "Instance?"}
+      ],
+      "methods": [
+        {"name": "FindFirstChild", "parameters": [{"name": "name", "type": "string"}, {"name": "recursive", "type": "boolean?"}], "returnType": "Instance?"},
+        {"name": "GetChildren", "parameters": [], "returnType": "{Instance}"},
+        {"name": "GetDescendants", "parameters": [], "returnType": "{Instance}"},
+        {"name": "Destroy", "parameters": [], "returnType": "void"},
+        {"name": "Clone", "parameters": [], "returnType": "Instance"},
+        {"name": "IsA", "parameters": [{"name": "className", "type": "string"}], "returnType": "boolean"},
+        {"name": "SetAttribute", "parameters": [{"name": "name", "type": "string"}, {"name": "value", "type": "any"}], "returnType": "void"},
+        {"name": "GetAttribute", "parameters": [{"name": "name", "type": "string"}], "returnType": "any"},
+        {"name": "GetAttributes", "parameters": [], "returnType": "{[string]: any}"}
+      ],
+      "events": [
+        {"name": "ChildAdded"},
+        {"name": "ChildRemoved"},
+        {"name": "Changed"}
+      ]
+    },
+    {
+      "name": "BasePart",
+      "superclass": "PVInstance",
+      "properties": [
+        {"name": "Position", "type": "Vector3"},
+        {"name": "Size", "type": "Vector3"},
+        {"name": "CFrame", "type": "CFrame"},
+        {"name": "Color", "type": "Color3"},
+        {"name": "BrickColor", "type": "BrickColor"},
+        {"name": "Material", "type": "Enum.Material"},
+        {"name": "Transparency", "type": "number"},
+        {"name": "Anchored", "type": "boolean"},
+        {"name": "CanCollide", "type": "boolean"},
+        {"name": "Massless", "type": "boolean"}
+      ],
+      "methods": [],
+      "events": [{"name": "Touched"}]
+    },
+    {
+      "name": "Part",
+      "superclass": "BasePart",
+      "properties": [
+        {"name": "Shape", "type": "Enum.PartType"}
+      ],
+      "methods": [],
+      "events": []
+    },
+    {
+      "name": "Model",
+      "superclass": "PVInstance",
+      "properties": [
+        {"name": "PrimaryPart", "type": "BasePart?"}
+      ],
+      "methods": [
+        {"name": "GetBoundingBox", "parameters": [], "returnType": "(CFrame, Vector3)"},
+        {"name": "MoveTo", "parameters": [{"name": "position", "type": "Vector3"}], "returnType": "void"}
+      ],
+      "events": []
+    },
+    {
+      "name": "Workspace",
+      "superclass": "WorldRoot",
+      "properties": [
+        {"name": "CurrentCamera", "type": "Camera?"},
+        {"name": "Gravity", "type": "number"},
+        {"name": "Terrain", "type": "Terrain"}
+      ],
+      "methods": [
+        {"name": "Raycast", "parameters": [{"name": "origin", "type": "Vector3"}, {"name": "direction", "type": "Vector3"}, {"name": "raycastParams", "type": "RaycastParams?"}], "returnType": "RaycastResult?"}
+      ],
+      "events": []
+    },
+    {
+      "name": "Script",
+      "superclass": "BaseScript",
+      "properties": [
+        {"name": "Source", "type": "string"}
+      ],
+      "methods": [],
+      "events": []
+    },
+    {
+      "name": "LocalScript",
+      "superclass": "BaseScript",
+      "properties": [
+        {"name": "Source", "type": "string"}
+      ],
+      "methods": [],
+      "events": []
+    },
+    {
+      "name": "ModuleScript",
+      "superclass": "LuaSourceContainer",
+      "properties": [
+        {"name": "Source", "type": "string"}
+      ],
+      "methods": [],
+      "events": []
+    }
+  ],
+  "enums": [
+    {
+      "name": "Material",
+      "items": [
+        {"name": "Plastic", "value": 256},
+        {"name": "Wood", "value": 512},
+        {"name": "Slate", "value": 800},
+        {"name": "Concrete", "value": 816},
+        {"name": "CorrodedMetal", "value": 1040},
+        {"name": "DiamondPlate", "value": 1056},
+        {"name": "Foil", "value": 1072},
+        {"name": "Grass", "value": 1280},
+        {"name": "Ice", "value": 1536},
+        {"name": "Marble", "value": 784},
+        {"name": "Granite", "value": 832},
+        {"name": "Brick", "value": 848},
+        {"name": "Pebble", "value": 864},
+        {"name": "Sand", "value": 1296},
+        {"name": "Fabric", "value": 1312},
+        {"name": "SmoothPlastic", "value": 272},
+        {"name": "Metal", "value": 1024},
+        {"name": "WoodPlanks", "value": 528},
+        {"name": "Neon", "value": 288},
+        {"name": "Glass", "value": 1568}
+      ]
+    },
+    {
+      "name": "PartType",
+      "items": [
+        {"name": "Ball", "value": 0},
+        {"name": "Block", "value": 1},
+        {"name": "Cylinder", "value": 2}
+      ]
+    }
+  ]
+}

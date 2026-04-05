@@ -1,0 +1,7 @@
+{
+  "name": "Conduit",
+  "tree": {
+    "$className": "Script",
+    "$path": "src"
+  }
+}

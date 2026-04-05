@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.rbxm
+.DS_Store
+*.log
+.env
+.rojo-port

@@ -1,0 +1,221 @@
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Bridge } from "../bridge.js";
+import { applyTokenBudget } from "../utils/formatting.js";
+
+export function register(server: McpServer, bridge: Bridge): void {
+  server.registerTool(
+    "playtest",
+    {
+      title: "Playtest Control & Virtual Input",
+      description:
+        "Control Roblox Studio playtesting and simulate user input.\n\n" +
+        "Actions:\n" +
+        "- `start`: Begin a playtest session.\n" +
+        "- `stop`: End the current playtest.\n" +
+        "- `execute`: Run Lua code in the running game context.\n" +
+        "- `get_output`: Get console/log output from Studio (works in edit mode and during playtest).\n" +
+        "- `inspect`: Evaluate a Luau expression and return the typed result (requires active playtest).\n" +
+        "- `navigate`: Walk the player character to a position using PathfindingService (requires client playtest).\n" +
+        "- `mouse_click`: Simulate a mouse click at screen coordinates.\n" +
+        "- `mouse_move`: Move the virtual mouse to screen coordinates.\n" +
+        "- `key_press`: Press and release a key.\n" +
+        "- `key_down`: Hold a key down.\n" +
+        "- `key_up`: Release a held key.",
+      inputSchema: z.object({
+        action: z
+          .enum(["start", "stop", "execute", "get_output", "inspect", "navigate", "mouse_click", "mouse_move", "key_press", "key_down", "key_up"])
+          .describe("Playtest action"),
+        code: z
+          .string()
+          .optional()
+          .describe("Lua code to execute (for 'execute' action)"),
+        // get_output params
+        messageTypes: z
+          .array(z.string())
+          .optional()
+          .describe("Filter by message types: 'MessageOutput', 'MessageWarning', 'MessageError', 'MessageInfo' (for 'get_output')"),
+        since: z
+          .number()
+          .optional()
+          .describe("Only return logs with timestamp >= this value (for 'get_output')"),
+        limit: z
+          .number()
+          .optional()
+          .describe("Maximum number of log entries to return (for 'get_output')"),
+        // inspect params
+        expression: z
+          .string()
+          .optional()
+          .describe("Luau expression to evaluate, e.g. 'game.Players.Player1.Character.Humanoid.Health' (for 'inspect')"),
+        // navigate params
+        target: z
+          .object({
+            x: z.number(),
+            y: z.number(),
+            z: z.number(),
+          })
+          .optional()
+          .describe("Target position to navigate to (for 'navigate')"),
+        targetPath: z
+          .string()
+          .optional()
+          .describe("Instance path to navigate to — uses its Position (for 'navigate')"),
+        timeout: z
+          .number()
+          .optional()
+          .describe("Navigation timeout in seconds, default 15 (for 'navigate')"),
+        // Virtual input params
+        x: z.number().optional().describe("Screen X coordinate (for mouse actions)"),
+        y: z.number().optional().describe("Screen Y coordinate (for mouse actions)"),
+        button: z
+          .enum(["Left", "Right", "Middle"])
+          .default("Left")
+          .describe("Mouse button (for 'mouse_click')"),
+        key: z
+          .string()
+          .optional()
+          .describe("Key name matching Enum.KeyCode, e.g. 'W', 'Space', 'Return' (for key actions)"),
+      }),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (params) => {
+      // ── get_output ──────────────────────────────────────────────
+      if (params.action === "get_output") {
+        const result = (await bridge.send("get_log_output", {
+          messageTypes: params.messageTypes,
+          since: params.since,
+          limit: params.limit,
+        })) as {
+          logs: Array<{ message: string; messageType: string; timestamp: number }>;
+          total: number;
+        };
+
+        if (result.logs.length === 0) {
+          return { content: [{ type: "text", text: "No log output found." }] };
+        }
+
+        const header = `**Console Output** (${result.logs.length}${result.logs.length < result.total ? ` of ${result.total}` : ""} entries)`;
+        const logText = result.logs
+          .map((l) => `[${l.messageType}] ${l.message}`)
+          .join("\n");
+        const text = `${header}\n\n\`\`\`\n${logText}\n\`\`\``;
+
+        return {
+          content: [{ type: "text", text: applyTokenBudget(text, undefined) }],
+        };
+      }
+
+      // ── inspect ─────────────────────────────────────────────────
+      if (params.action === "inspect") {
+        if (!params.expression) {
+          return {
+            content: [{ type: "text", text: "inspect action requires an `expression` parameter." }],
+          };
+        }
+        const result = (await bridge.send("playtest_inspect", {
+          expression: params.expression,
+        })) as {
+          value: unknown;
+          type: string;
+          expression: string;
+        };
+
+        const valueStr = typeof result.value === "object"
+          ? JSON.stringify(result.value, null, 2)
+          : String(result.value);
+        const text = `**Expression:** \`${result.expression}\`\n**Type:** \`${result.type}\`\n**Value:** ${valueStr}`;
+        return { content: [{ type: "text", text }] };
+      }
+
+      // ── navigate ────────────────────────────────────────────────
+      if (params.action === "navigate") {
+        if (!params.target && !params.targetPath) {
+          return {
+            content: [{ type: "text", text: "navigate action requires either `target` or `targetPath`." }],
+          };
+        }
+        const result = (await bridge.send("playtest_navigate", {
+          target: params.target,
+          targetPath: params.targetPath,
+          timeout: params.timeout,
+        })) as {
+          status: string;
+          position?: { x: number; y: number; z: number };
+          message?: string;
+        };
+
+        const posStr = result.position
+          ? `(${result.position.x.toFixed(1)}, ${result.position.y.toFixed(1)}, ${result.position.z.toFixed(1)})`
+          : "unknown";
+        const text = `**Navigation:** ${result.status}\n**Final position:** ${posStr}${result.message ? `\n${result.message}` : ""}`;
+        return { content: [{ type: "text", text }] };
+      }
+
+      // ── virtual input ───────────────────────────────────────────
+      if (
+        params.action === "mouse_click" ||
+        params.action === "mouse_move" ||
+        params.action === "key_press" ||
+        params.action === "key_down" ||
+        params.action === "key_up"
+      ) {
+        const result = (await bridge.send("virtual_input", {
+          action: params.action,
+          x: params.x,
+          y: params.y,
+          button: params.button,
+          key: params.key,
+        })) as { status: string; message?: string };
+
+        return {
+          content: [
+            { type: "text", text: result.message ?? `Virtual input ${params.action}: ${result.status}` },
+          ],
+        };
+      }
+
+      // Original playtest actions
+      const result = (await bridge.send("playtest", {
+        action: params.action,
+        code: params.code,
+      })) as {
+        status: string;
+        result?: string;
+        error?: string;
+        output?: Array<{ message: string; messageType: string }>;
+      };
+
+      let text: string;
+      if (params.action === "execute") {
+        const lines: string[] = [];
+        if (result.error) {
+          lines.push(`**Error:** ${result.error}`);
+        }
+        if (result.result) {
+          lines.push(`**Return value:** ${result.result}`);
+        }
+        if (result.output && result.output.length > 0) {
+          const outputText = result.output
+            .map((o) => `[${o.messageType}] ${o.message}`)
+            .join("\n");
+          lines.push(`**Output:**\n\`\`\`\n${outputText}\n\`\`\``);
+        }
+        text =
+          lines.length > 0
+            ? lines.join("\n\n")
+            : `Execution completed (${result.status})`;
+        text = applyTokenBudget(text, undefined);
+      } else {
+        text = `Playtest ${params.action}: ${result.status}`;
+      }
+
+      return { content: [{ type: "text", text }] };
+    },
+  );
+}

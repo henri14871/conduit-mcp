@@ -1,0 +1,50 @@
+{
+  "name": "conduit-mcp",
+  "version": "2.0.0",
+  "description": "WebSocket-first MCP bridge between AI coding assistants and Roblox Studio",
+  "type": "module",
+  "bin": {
+    "conduit-mcp": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist/",
+    "plugin/Conduit.rbxm"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "tsup": "^8.3.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "roblox",
+    "roblox-studio",
+    "ai",
+    "websocket",
+    "claude",
+    "cursor",
+    "windsurf"
+  ],
+  "author": "Henri Elliott-Knight <henri@knightco.digital>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/henri-knightco/conduit-mcp"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
