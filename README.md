@@ -42,28 +42,49 @@ Install the plugin from [GitHub releases](https://github.com/henri-knightco/cond
 
 </details>
 
+## Why Fewer Tools Is Better
+
+Most Roblox MCPs give the AI 40-50+ separate tools -- one per API call. That means the model burns tokens just reading tool definitions, and needs multiple round trips for basic tasks.
+
+Conduit takes the opposite approach: **19 workflow-oriented tools**, each doing the work of 3-5 flat tools. `edit_script` handles full replace, range edits, find/replace, and cross-script refactoring in one tool. `playtest` covers start/stop, code execution, console output, runtime inspection, character navigation, and virtual input. `explore` browses the tree, manages selection, lists services, and reports studio state.
+
+The result: the AI reads fewer tool definitions, makes fewer calls, and spends tokens on your game -- not on MCP overhead.
+
 ## How Conduit Compares
 
-| Capability | Conduit | Roblox MCP | RojoMCP | MCP-Roblox |
-|---|:---:|:---:|:---:|:---:|
-| **Transport** | WebSocket | HTTP poll | HTTP poll | HTTP poll |
-| **Latency** | <50ms | 200-500ms | 200-500ms | 200-500ms |
-| **Multi-Studio** | Yes | No | No | No |
-| **Script grep** | Yes | No | No | No |
-| **Range editing** | Yes | No | Yes | No |
-| **Multi-script refactor** | Yes | No | No | No |
-| **Console/log output** | Yes | No | No | No |
-| **Runtime inspection** | Yes | No | No | No |
-| **Character navigation** | Yes | No | No | No |
-| **Virtual input** | Yes | No | No | No |
-| **Transactional undo** | Yes | No | No | No |
-| **MCP tool annotations** | Yes | No | No | No |
-| **Token-aware responses** | Yes | No | No | No |
-| **Built-in API reference** | Yes | No | No | No |
-| **Rojo integration** | Optional | No | Built-in | No |
-| **Open Cloud API** | Optional | No | No | No |
-| **Tool count** | 19 | 65+ | ~15 | ~20 |
-| **Token efficiency** | Workflow-oriented | 1:1 API mapping | Moderate | 1:1 API mapping |
+|  | **Conduit** | **Roblox Built-in** | **robloxstudio-mcp** | **Weppy** |
+|---|---|---|---|---|
+| **Transport** | WebSocket | Native | HTTP polling | HTTP |
+| **Latency** | <50ms | Native | 200-500ms | 200-500ms |
+| **Tool design** | Workflow (19 tools) | Workflow (16 tools) | 1:1 mapping (39 tools) | Action-based (22 tools, 150+ actions) |
+| **License** | MIT | Closed source | MIT | AGPL (Pro = paid) |
+| | | | | |
+| Script range editing | Yes | Yes | Yes | Yes |
+| Script grep/search | Yes | Yes | Yes | Yes |
+| Multi-script refactor | Yes | -- | -- | -- |
+| Console/log output | Yes | Yes | Yes | Yes |
+| Runtime inspection | Yes | -- | -- | -- |
+| Playtest control | Yes | Yes | Yes | Paid |
+| Virtual input | Yes | Yes | -- | -- |
+| Character navigation | Yes | Yes | -- | -- |
+| Undo/redo | Yes | -- | Yes | -- |
+| Transactional undo | Yes | -- | -- | -- |
+| Multi-Studio | Yes | Yes | -- | 3 places |
+| Terrain tools | Yes | -- | -- | Paid |
+| Asset search/insert | Yes | Yes | Yes | Paid |
+| Attributes & tags | Yes | -- | Yes | Yes |
+| Screenshot | Yes | -- | Yes | -- |
+| | | | | |
+| Token-aware responses | Yes | -- | -- | -- |
+| MCP tool annotations | Yes | -- | -- | -- |
+| Built-in API reference | Yes | -- | -- | -- |
+| Rojo integration | Optional | -- | -- | -- |
+| Open Cloud API | Optional | -- | -- | -- |
+| AI mesh generation | -- | Yes | -- | -- |
+
+**Roblox Built-in** ships with Studio (no install) and can generate meshes/materials, but has no undo, no terrain tools, no attributes, and is closed source. **robloxstudio-mcp** (335 stars) is the community standard but uses HTTP polling and 1:1 tool mapping that bloats context. **Weppy** has the most actions but locks most behind a paid tier with AGPL licensing.
+
+Conduit is the only open-source option with WebSocket transport, workflow-oriented tools, and full debugging capabilities (console output + runtime inspection + transactional undo).
 
 ## Tools
 
