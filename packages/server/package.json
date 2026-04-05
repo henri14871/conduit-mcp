@@ -4,7 +4,7 @@
   "description": "WebSocket-first MCP bridge between AI coding assistants and Roblox Studio",
   "type": "module",
   "bin": {
-    "conduit-mcp": "./dist/cli.js"
+    "conduit-mcp": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "files": [
@@ -42,7 +42,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/henri-knightco/conduit-mcp"
+    "url": "git+https://github.com/henri-knightco/conduit-mcp.git"
   },
   "engines": {
     "node": ">=18.0.0"
