@@ -403,13 +403,30 @@ local function register(router: any)
 					}
 				end
 
+				local moveFinished = false
+				local moveConn = humanoid.MoveToFinished:Connect(function(_reached: boolean)
+					moveFinished = true
+				end)
+
 				humanoid:MoveTo(waypoint.Position)
 
 				if waypoint.Action == Enum.PathWaypointAction.Jump then
 					humanoid.Jump = true
 				end
 
-				humanoid.MoveToFinished:Wait()
+				while not moveFinished and (tick() - startTime) < timeout do
+					task.wait(0.1)
+				end
+				moveConn:Disconnect()
+
+				if not moveFinished then
+					local finalPos = rootPart.Position
+					return {
+						status = "timeout",
+						position = { x = finalPos.X, y = finalPos.Y, z = finalPos.Z },
+						message = "Navigation timed out before reaching destination",
+					}
+				end
 			end
 
 			local finalPos = rootPart.Position

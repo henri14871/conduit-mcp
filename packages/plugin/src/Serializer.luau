@@ -28,6 +28,9 @@ function Serializer.resolvePath(pathStr: string): Instance?
 end
 
 function Serializer.getPath(instance: Instance): string
+	if instance == game then
+		return "game"
+	end
 	local parts = {}
 	local current: Instance? = instance
 	while current and current ~= game do
@@ -75,9 +78,9 @@ function Serializer.serialize(value: any): any
 	if t == "Color3" then
 		return {
 			Type = "Color3",
-			R = math.floor(value.R * 255),
-			G = math.floor(value.G * 255),
-			B = math.floor(value.B * 255),
+			R = math.round(value.R * 255),
+			G = math.round(value.G * 255),
+			B = math.round(value.B * 255),
 		}
 	end
 

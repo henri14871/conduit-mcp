@@ -3,7 +3,16 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Bridge } from "../bridge.js";
 import { applyTokenBudget } from "../utils/formatting.js";
 
+export function registerReadOnly(server: McpServer, bridge: Bridge): void {
+  registerQuery(server, bridge);
+}
+
 export function register(server: McpServer, bridge: Bridge): void {
+  registerQuery(server, bridge);
+  registerWrite(server, bridge);
+}
+
+function registerQuery(server: McpServer, bridge: Bridge): void {
   // ── query (merged query_instances + grep_scripts) ─────────────────
   server.registerTool(
     "query",
@@ -148,7 +157,9 @@ export function register(server: McpServer, bridge: Bridge): void {
       };
     },
   );
+}
 
+function registerWrite(server: McpServer, bridge: Bridge): void {
   // ── create (merged create_instances + clone_instances) ────────────
   server.registerTool(
     "create",

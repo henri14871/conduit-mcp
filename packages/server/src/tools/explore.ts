@@ -55,7 +55,7 @@ export function register(server: McpServer, bridge: Bridge): void {
           .describe("Maximum token budget for the response"),
       }),
       annotations: {
-        readOnlyHint: true,
+        readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,

@@ -2,8 +2,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Bridge } from "../bridge.js";
 
 import { register as registerExplore } from "./explore.js";
-import { register as registerInstances } from "./instances.js";
-import { register as registerScripts } from "./scripts.js";
+import { register as registerInstances, registerReadOnly as registerInstancesReadOnly } from "./instances.js";
+import { register as registerScripts, registerReadOnly as registerScriptsReadOnly } from "./scripts.js";
 import { register as registerPlaytest } from "./playtest.js";
 import { register as registerEnvironment } from "./environment.js";
 import { register as registerAssets } from "./assets.js";
@@ -38,9 +38,9 @@ export function registerAllTools(
     registerAssets(server, bridge);
     registerBuilds(server, bridge);
   } else {
-    // Inspector mode — query + read_script are useful read-only
-    registerInstances(server, bridge);
-    registerScripts(server, bridge);
+    // Inspector mode — only read-only tools (query, read_script)
+    registerInstancesReadOnly(server, bridge);
+    registerScriptsReadOnly(server, bridge);
   }
 
   // Optional modules (loaded dynamically to avoid bundling when unused)

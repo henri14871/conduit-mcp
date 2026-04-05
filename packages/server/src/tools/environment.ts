@@ -4,9 +4,9 @@ import type { Bridge } from "../bridge.js";
 import { applyTokenBudget } from "../utils/formatting.js";
 
 const Vector3Schema = z.object({
-  x: z.number().describe("X coordinate"),
-  y: z.number().describe("Y coordinate"),
-  z: z.number().describe("Z coordinate"),
+  X: z.number().describe("X coordinate"),
+  Y: z.number().describe("Y coordinate"),
+  Z: z.number().describe("Z coordinate"),
 });
 
 const RegionSchema = z.object({

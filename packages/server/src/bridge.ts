@@ -34,6 +34,9 @@ export class Bridge extends EventEmitter {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private actualPort = 0;
 
+  // HTTP-only studios (no WebSocket connection)
+  private httpStudios = new Map<string, StudioInfo>();
+
   // Unregistered WebSocket connections waiting for a registration message
   private pendingWs = new Set<WebSocket>();
 
@@ -60,7 +63,11 @@ export class Bridge extends EventEmitter {
   // ── Public studio management ───────────────────────────────────
 
   getStudios(): StudioInfo[] {
-    return Array.from(this.studios.values()).map((s) => s.info);
+    const wsStudios = Array.from(this.studios.values()).map((s) => s.info);
+    const httpOnly = Array.from(this.httpStudios.values()).filter(
+      (s) => !this.studios.has(s.studioId),
+    );
+    return [...wsStudios, ...httpOnly];
   }
 
   getActiveStudioId(): string | null {
@@ -68,10 +75,10 @@ export class Bridge extends EventEmitter {
   }
 
   setActiveStudio(studioId: string): void {
-    if (!this.studios.has(studioId)) {
+    if (!this.studios.has(studioId) && !this.httpStudios.has(studioId)) {
       throw new Error(
         `Studio "${studioId}" is not connected. Connected studios: ${
-          Array.from(this.studios.keys()).join(", ") || "none"
+          this.getStudios().map((s) => s.studioId).join(", ") || "none"
         }`,
       );
     }
@@ -125,6 +132,7 @@ export class Bridge extends EventEmitter {
       studio.ws.close();
     }
     this.studios.clear();
+    this.httpStudios.clear();
     this.activeStudioId = null;
 
     // Close pending unregistered connections
@@ -138,6 +146,17 @@ export class Bridge extends EventEmitter {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+
+    // Close HTTP long-poll waiters and reject their pending requests
+    for (const [, waiters] of this.httpPollWaiters) {
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timer);
+        waiter.res.writeHead(503);
+        waiter.res.end();
+      }
+    }
+    this.httpPollWaiters.clear();
+    this.httpPendingCommands.clear();
 
     // Close servers
     await new Promise<void>((resolve) => {
@@ -395,6 +414,19 @@ export class Bridge extends EventEmitter {
               `Heartbeat timeout for studio "${studioId}" — disconnecting`,
             );
             studio.ws.terminate();
+          } else if (this.httpStudios.has(studioId)) {
+            log.warn(
+              `Heartbeat timeout for HTTP studio "${studioId}" — evicting`,
+            );
+            const info = this.httpStudios.get(studioId)!;
+            this.httpStudios.delete(studioId);
+            this.lastHeartbeats.delete(studioId);
+            this.emit("studio-disconnected", info);
+            if (this.activeStudioId === studioId) {
+              const remaining = this.getStudios();
+              this.activeStudioId =
+                remaining.length > 0 ? remaining[0].studioId : null;
+            }
           }
         }
       }
@@ -462,11 +494,15 @@ export class Bridge extends EventEmitter {
   private handlePoll(studioId: string, res: http.ServerResponse): void {
     // Register this studio via HTTP if not already known
     if (!this.studios.has(studioId) && studioId !== "_default") {
-      const info: StudioInfo = {
-        studioId,
-        connectedAt: Date.now(),
-      };
-      // No WebSocket for HTTP-only studios, but track them for routing
+      if (!this.httpStudios.has(studioId)) {
+        const info: StudioInfo = {
+          studioId,
+          connectedAt: Date.now(),
+        };
+        this.httpStudios.set(studioId, info);
+        this.emit("studio-connected", info);
+        log.info(`HTTP-only studio registered: ${studioId}`);
+      }
       this.lastHeartbeats.set(studioId, Date.now());
       if (this.activeStudioId === null) {
         this.activeStudioId = studioId;

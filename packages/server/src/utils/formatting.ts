@@ -6,6 +6,7 @@ interface TreeNode {
   name: string;
   className: string;
   children?: TreeNode[];
+  childCount?: number;
   properties?: Record<string, unknown>;
 }
 
@@ -29,8 +30,11 @@ export function formatTree(
     for (const child of data.children) {
       result += formatTree(child, depth - 1, indent + "  ");
     }
-  } else if (data.children && data.children.length > 0) {
-    result += `${indent}  *… ${data.children.length} children*\n`;
+  } else {
+    const count = data.children?.length ?? data.childCount ?? 0;
+    if (count > 0) {
+      result += `${indent}  *… ${count} children*\n`;
+    }
   }
 
   return result;

@@ -3,7 +3,16 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Bridge } from "../bridge.js";
 import { formatScript, applyTokenBudget } from "../utils/formatting.js";
 
+export function registerReadOnly(server: McpServer, bridge: Bridge): void {
+  registerReadScript(server, bridge);
+}
+
 export function register(server: McpServer, bridge: Bridge): void {
+  registerReadScript(server, bridge);
+  registerWriteTools(server, bridge);
+}
+
+function registerReadScript(server: McpServer, bridge: Bridge): void {
   server.registerTool(
     "read_script",
     {
@@ -44,7 +53,9 @@ export function register(server: McpServer, bridge: Bridge): void {
       };
     },
   );
+}
 
+function registerWriteTools(server: McpServer, bridge: Bridge): void {
   server.registerTool(
     "edit_script",
     {
