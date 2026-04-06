@@ -2,36 +2,49 @@
 
 local Connection = require(script.Connection)
 local CommandRouter = require(script.CommandRouter)
+local Dashboard = require(script.Dashboard)
 
--- ── Configuration ────────────────────────────────────────────────
+-- ── Settings ────────────────────────────────────────────────────
 
-local PORT = 3200
+local savedPort = plugin:GetSetting("ConduitPort")
+local PORT: number = if type(savedPort) == "number" then savedPort else 3200
+
+local savedAutoConnect = plugin:GetSetting("ConduitAutoConnect")
+local AUTO_CONNECT: boolean = if savedAutoConnect == nil then true else savedAutoConnect == true
 
 -- ── Plugin UI ────────────────────────────────────────────────────
 
 local toolbar = plugin:CreateToolbar("Conduit MCP")
-local connectButton = toolbar:CreateButton(
-	"ConduitConnect",
-	"Connect to Conduit MCP server",
+local toggleButton = toolbar:CreateButton(
+	"ConduitToggle",
+	"Open Conduit MCP Dashboard",
 	"rbxassetid://0",
 	"Conduit"
 )
 
--- Status indicator via button tooltip
-local function updateButtonState(status: string)
-	if status == "connected" then
-		connectButton:SetActive(true)
-	elseif status == "connecting" then
-		connectButton:SetActive(false)
-	else
-		connectButton:SetActive(false)
-	end
-end
+-- Dashboard widget
+local widgetInfo = DockWidgetPluginGuiInfo.new(
+	Enum.InitialDockState.Right,
+	false, -- initially not visible
+	false, -- don't override saved state
+	300,   -- default width
+	400,   -- default height
+	250,   -- min width
+	200    -- min height
+)
+local widget = plugin:CreateDockWidgetPluginGui("ConduitDashboard", widgetInfo)
+widget.Title = "Conduit MCP"
 
--- ── Initialize connection & router ───────────────────────────────
+-- ── Initialize connection, router, dashboard ────────────────────
 
 local connection = Connection.new(PORT)
 local router = CommandRouter.new(connection)
+local dashboard = Dashboard.new(widget, plugin)
+
+-- Apply saved settings to dashboard
+dashboard:setPort(PORT)
+dashboard:setAutoConnect(AUTO_CONNECT)
+dashboard:updateStudioInfo(PORT, game.Name)
 
 -- ── Register all handlers ────────────────────────────────────────
 
@@ -44,10 +57,20 @@ require(script.handlers.Assets).register(router)
 require(script.handlers.Builds).register(router)
 require(script.handlers.Utility).register(router)
 
--- ── Connection status tracking ───────────────────────────────────
+-- ── Wire dashboard to connection ────────────────────────────────
 
 connection:onStatusChange(function(status)
-	updateButtonState(status)
+	-- Update toolbar button active state
+	if status == "connected" then
+		toggleButton:SetActive(true)
+	else
+		toggleButton:SetActive(false)
+	end
+
+	-- Update dashboard
+	dashboard:updateStatus(status)
+	dashboard:updateStudioInfo(connection:getPort(), game.Name)
+
 	if status == "connected" then
 		print("[Conduit] Connected to MCP server")
 	elseif status == "disconnected" then
@@ -55,26 +78,43 @@ connection:onStatusChange(function(status)
 	end
 end)
 
--- ── Button toggle ────────────────────────────────────────────────
+-- Wire activity log
+router:onActivity(function(entry)
+	dashboard:logActivity(entry.method, entry.status, entry.duration)
+end)
 
-connectButton.Click:Connect(function()
-	if connection:isConnected() then
-		connection:disconnect()
-	else
-		connection:connect()
-	end
+-- Wire dashboard buttons
+dashboard:onConnect(function()
+	connection:connect()
+end)
+
+dashboard:onDisconnect(function()
+	connection:disconnect()
+end)
+
+dashboard:onPortChange(function(port)
+	connection:setPort(port)
+	dashboard:updateStudioInfo(port, game.Name)
+end)
+
+-- ── Toolbar button toggles dashboard visibility ─────────────────
+
+toggleButton.Click:Connect(function()
+	widget.Enabled = not widget.Enabled
 end)
 
 -- ── Check HttpService ────────────────────────────────────────────
 
 local HttpService = game:GetService("HttpService")
 if not HttpService.HttpEnabled then
-	warn("[Conduit] HttpService is not enabled! Go to Game Settings → Security → Allow HTTP Requests")
+	warn("[Conduit] HttpService is not enabled! Go to Game Settings -> Security -> Allow HTTP Requests")
 end
 
 -- ── Auto-connect ─────────────────────────────────────────────────
 
-connection:connect()
+if AUTO_CONNECT then
+	connection:connect()
+end
 
 -- ── Cleanup ──────────────────────────────────────────────────────
 

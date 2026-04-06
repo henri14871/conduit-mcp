@@ -24,6 +24,7 @@ export type Connection = typeof(setmetatable({} :: {
 	_useHttpFallback: boolean,
 	_heartbeatThread: thread?,
 	_pollThread: thread?,
+	_connectThread: thread?,
 	_shouldRun: boolean,
 	_messageCallbacks: { (data: any) -> () },
 	_statusCallbacks: { (status: ConnectionStatus) -> () },
@@ -40,6 +41,7 @@ function Connection.new(port: number): Connection
 		_useHttpFallback = false,
 		_heartbeatThread = nil,
 		_pollThread = nil,
+		_connectThread = nil,
 		_shouldRun = false,
 		_messageCallbacks = {},
 		_statusCallbacks = {},
@@ -67,6 +69,24 @@ function Connection.getStudioId(self: Connection): string
 	return self._studioId
 end
 
+function Connection.getPort(self: Connection): number
+	return self._port
+end
+
+function Connection.setPort(self: Connection, port: number)
+	if self._port == port then
+		return
+	end
+	local wasConnected = self._shouldRun
+	if wasConnected then
+		self:disconnect()
+	end
+	self._port = port
+	if wasConnected then
+		self:connect()
+	end
+end
+
 function Connection.connect(self: Connection)
 	if self._shouldRun then
 		return
@@ -75,7 +95,7 @@ function Connection.connect(self: Connection)
 	self._wsFailureCount = 0
 	self._useHttpFallback = false
 
-	task.spawn(function()
+	self._connectThread = task.spawn(function()
 		self:_connectLoop()
 	end)
 end
@@ -99,6 +119,11 @@ function Connection.disconnect(self: Connection)
 	if self._pollThread then
 		task.cancel(self._pollThread)
 		self._pollThread = nil
+	end
+
+	if self._connectThread then
+		task.cancel(self._connectThread)
+		self._connectThread = nil
 	end
 end
 

@@ -13,6 +13,13 @@ type Connection = {
 local CommandRouter = {}
 CommandRouter.__index = CommandRouter
 
+export type ActivityEntry = {
+	method: string,
+	status: "running" | "success" | "error",
+	startTime: number,
+	duration: number?,
+}
+
 export type CommandRouter = typeof(setmetatable({} :: {
 	_connection: Connection,
 	_handlers: { [string]: Types.HandlerFn },
@@ -21,6 +28,7 @@ export type CommandRouter = typeof(setmetatable({} :: {
 	_isMutationRunning: boolean,
 	_activeTransaction: { id: string, recording: any }?,
 	_transactionTimeout: thread?,
+	_activityCallbacks: { (entry: ActivityEntry) -> () },
 }, CommandRouter))
 
 function CommandRouter.new(connection: Connection): CommandRouter
@@ -32,6 +40,7 @@ function CommandRouter.new(connection: Connection): CommandRouter
 		_isMutationRunning = false,
 		_activeTransaction = nil,
 		_transactionTimeout = nil,
+		_activityCallbacks = {},
 	}, CommandRouter)
 
 	connection:onMessage(function(data: any)
@@ -100,6 +109,16 @@ function CommandRouter.new(connection: Connection): CommandRouter
 	return self
 end
 
+function CommandRouter.onActivity(self: CommandRouter, callback: (entry: ActivityEntry) -> ())
+	table.insert(self._activityCallbacks, callback)
+end
+
+function CommandRouter._fireActivity(self: CommandRouter, entry: ActivityEntry)
+	for _, cb in self._activityCallbacks do
+		task.spawn(cb, entry)
+	end
+end
+
 function CommandRouter.register(self: CommandRouter, method: string, handler: Types.HandlerFn, mutating: boolean?)
 	self._handlers[method] = handler
 	if mutating then
@@ -137,10 +156,15 @@ function CommandRouter._handleMessage(self: CommandRouter, data: any)
 	else
 		-- Read-only handlers run immediately in parallel
 		task.spawn(function()
+			local startTime = os.clock()
+			self:_fireActivity({ method = method, status = "running", startTime = startTime })
 			local ok, result = pcall(handler, params)
+			local duration = os.clock() - startTime
 			if ok then
+				self:_fireActivity({ method = method, status = "success", startTime = startTime, duration = duration })
 				self:_sendResult(id, result)
 			else
+				self:_fireActivity({ method = method, status = "error", startTime = startTime, duration = duration })
 				self:_sendError(id, "HANDLER_ERROR", tostring(result))
 			end
 		end)
@@ -161,6 +185,8 @@ function CommandRouter._processMutationQueue(self: CommandRouter)
 
 	task.spawn(function()
 		local ok, result
+		local startTime = os.clock()
+		self:_fireActivity({ method = item.method, status = "running", startTime = startTime })
 
 		local recordingName = item.method
 		if item.sessionId then
@@ -172,11 +198,8 @@ function CommandRouter._processMutationQueue(self: CommandRouter)
 			or item.method == "rollback_transaction"
 
 		if isTransactionCmd or self._activeTransaction then
-			-- Transaction commands manage their own recording lifecycle.
-			-- Other commands inside a transaction run without individual recordings.
 			ok, result = pcall(item.handler, item.params)
 		else
-			-- Normal: wrap in UndoManager.record for individual undo point
 			ok, result = pcall(function()
 				return UndoManager.record(recordingName, function()
 					return item.handler(item.params)
@@ -184,9 +207,12 @@ function CommandRouter._processMutationQueue(self: CommandRouter)
 			end)
 		end
 
+		local duration = os.clock() - startTime
 		if ok then
+			self:_fireActivity({ method = item.method, status = "success", startTime = startTime, duration = duration })
 			self:_sendResult(item.id, result)
 		else
+			self:_fireActivity({ method = item.method, status = "error", startTime = startTime, duration = duration })
 			self:_sendError(item.id, "HANDLER_ERROR", tostring(result))
 		end
 
