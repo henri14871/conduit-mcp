@@ -42,7 +42,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/henri-knightco/conduit-mcp.git"
+    "url": "git+https://github.com/henri14871/conduit-mcp.git"
   },
   "engines": {
     "node": ">=18.0.0"

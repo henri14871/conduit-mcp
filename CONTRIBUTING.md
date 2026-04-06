@@ -5,7 +5,7 @@ Thanks for your interest in contributing!
 ## Setup
 
 ```bash
-git clone https://github.com/henri-knightco/conduit-mcp.git
+git clone https://github.com/henri14871/conduit-mcp.git
 cd conduit-mcp
 pnpm install
 pnpm build

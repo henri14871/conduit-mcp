@@ -36,7 +36,7 @@ Add to your AI client's MCP config:
 }
 ```
 
-Install the plugin from [GitHub releases](https://github.com/henri-knightco/conduit-mcp/releases) or build from source with Rojo.
+Install the plugin from [GitHub releases](https://github.com/henri14871/conduit-mcp/releases) or build from source with Rojo.
 
 **Requires:** Node.js 18+ and Roblox Studio with HttpService enabled.
 
@@ -174,7 +174,7 @@ pnpm test                     # Run tests
 
 ## Contributing
 
-PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. [Open an issue](https://github.com/henri-knightco/conduit-mcp/issues) for bugs or feature requests.
+PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. [Open an issue](https://github.com/henri14871/conduit-mcp/issues) for bugs or feature requests.
 
 ## License
 
