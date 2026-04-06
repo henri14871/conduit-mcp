@@ -32,11 +32,18 @@ export interface BuildFile {
   root: unknown;
 }
 
+function validateBuildName(name: string): void {
+  if (!/^[\w-]+$/.test(name)) {
+    throw new Error(`Invalid build name "${name}". Names must match /^[\\w-]+$/.`);
+  }
+}
+
 export function saveBuild(
   name: string,
   root: unknown,
   description?: string,
 ): BuildMetadata {
+  validateBuildName(name);
   ensureDir();
   const rootObj = root as { className?: string; children?: unknown[] };
   const data: BuildFile = {
@@ -57,6 +64,7 @@ export function saveBuild(
 }
 
 export function loadBuild(name: string): BuildFile {
+  validateBuildName(name);
   const filePath = join(BUILDS_DIR, `${name}.json`);
   if (!existsSync(filePath)) {
     throw new Error(`Build "${name}" not found. Use builds --action list to see available builds.`);

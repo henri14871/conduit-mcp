@@ -226,7 +226,14 @@ local function register(router: any)
 			end
 
 			if matches and filterNamePattern then
-				if not string.match(descendant.Name, filterNamePattern) then
+				-- pcall in case the user-supplied pattern is invalid Lua pattern syntax
+				local patternOk, patternMatch = pcall(string.match, descendant.Name, filterNamePattern)
+				if not patternOk then
+					-- Fall back to plain string.find if the pattern is invalid
+					if not string.find(descendant.Name, filterNamePattern, 1, true) then
+						matches = false
+					end
+				elseif not patternMatch then
 					matches = false
 				end
 			end

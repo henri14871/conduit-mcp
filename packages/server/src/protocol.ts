@@ -57,7 +57,7 @@ export interface PendingRequest {
 
 // ── Helpers ──────────────────────────────────────────────────────
 export function generateId(): string {
-  return randomUUID().slice(0, 8);
+  return randomUUID().slice(0, 16);
 }
 
 export function isHeartbeat(msg: unknown): msg is Heartbeat {

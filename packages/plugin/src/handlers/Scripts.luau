@@ -288,6 +288,9 @@ local function register(router: any)
 		end
 
 		-- Capture output during execution
+		-- NOTE: LogService.MessageOut is global — it may capture unrelated messages
+		-- from other threads during execution. This is a known Roblox limitation.
+		-- We mitigate by disconnecting immediately after pcall returns.
 		local LogService = game:GetService("LogService")
 		local outputLines: { { message: string, messageType: string } } = {}
 		local connection: RBXScriptConnection? = nil

@@ -27,6 +27,10 @@ function Serializer.resolvePath(pathStr: string): Instance?
 	return current
 end
 
+-- Known limitation: paths use "." as delimiter, so instance names containing
+-- dots (e.g. "my.model") will produce ambiguous paths like "game.Workspace.my.model".
+-- This is a protocol-level constraint shared with the server; changing the delimiter
+-- would be a breaking change. Avoid dots in instance names when possible.
 function Serializer.getPath(instance: Instance): string
 	if instance == game then
 		return "game"

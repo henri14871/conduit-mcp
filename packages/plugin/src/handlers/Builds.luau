@@ -76,10 +76,24 @@ local function deepSerialize(instance: Instance): { [string]: any }
 	return node
 end
 
-local function deepImport(node: { [string]: any }, parent: Instance): Instance
+-- Class names that should not be created via import_build unless explicitly allowed
+local DENIED_CLASSNAMES: { [string]: boolean } = {
+	Script = true,
+	LocalScript = true,
+	ModuleScript = true,
+}
+
+local function deepImport(node: { [string]: any }, parent: Instance, allowScripts: boolean?): Instance
 	local ScriptEditorService = game:GetService("ScriptEditorService")
 
-	local instance = Instance.new(node.className)
+	if not allowScripts and DENIED_CLASSNAMES[node.className] then
+		error(`import_build: creating {node.className} instances is denied for safety. Pass allowScripts = true to override.`)
+	end
+
+	local createOk, instance = pcall(Instance.new, node.className)
+	if not createOk or not instance then
+		error(`import_build: failed to create instance of class "{node.className}"`)
+	end
 	instance.Name = node.name or node.className
 
 	-- Apply properties
@@ -121,7 +135,7 @@ local function deepImport(node: { [string]: any }, parent: Instance): Instance
 	-- Import children recursively
 	if node.children then
 		for _, childNode in node.children do
-			deepImport(childNode, instance)
+			deepImport(childNode, instance, allowScripts)
 		end
 	end
 
@@ -156,12 +170,14 @@ local function register(router: any)
 			error("import_build requires a targetParent")
 		end
 
+		local allowScripts: boolean = if params.allowScripts then true else false
+
 		local targetParent = Serializer.resolvePath(targetParentPath)
 		if not targetParent then
 			error(`Could not resolve target parent path: {targetParentPath}`)
 		end
 
-		local root = deepImport(tree, targetParent)
+		local root = deepImport(tree, targetParent, allowScripts)
 
 		return {
 			path = Serializer.getPath(root),

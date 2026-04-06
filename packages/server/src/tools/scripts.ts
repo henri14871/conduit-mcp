@@ -41,6 +41,12 @@ function registerReadScript(server: McpServer, bridge: Bridge): void {
       },
     },
     async (params) => {
+      if (params.lineRange && params.lineRange.end < params.lineRange.start) {
+        return {
+          content: [{ type: "text", text: "lineRange.end must be >= lineRange.start." }],
+          isError: true,
+        };
+      }
       const result = (await bridge.send("read_script", {
         path: params.path,
         lineRange: params.lineRange,
@@ -108,6 +114,38 @@ function registerWriteTools(server: McpServer, bridge: Bridge): void {
       },
     },
     async (params) => {
+      // ── lineRange validation ──────────────────────────────────
+      if (
+        params.mode === "range" &&
+        params.edits &&
+        params.edits.some((e) => e.endLine < e.startLine)
+      ) {
+        return {
+          content: [{ type: "text", text: "Range edit has endLine < startLine." }],
+          isError: true,
+        };
+      }
+
+      // ── mode-specific validation ──────────────────────────────
+      if (params.mode === "full" && params.source === undefined) {
+        return {
+          content: [{ type: "text", text: "full mode requires a `source` parameter." }],
+          isError: true,
+        };
+      }
+      if (params.mode === "range" && (!params.edits || params.edits.length === 0)) {
+        return {
+          content: [{ type: "text", text: "range mode requires a non-empty `edits` array." }],
+          isError: true,
+        };
+      }
+      if (params.mode === "find_replace" && !params.find) {
+        return {
+          content: [{ type: "text", text: "find_replace mode requires a `find` parameter." }],
+          isError: true,
+        };
+      }
+
       // ── multi_replace mode ────────────────────────────────────
       if (params.mode === "multi_replace") {
         if (!params.scripts || params.scripts.length === 0) {

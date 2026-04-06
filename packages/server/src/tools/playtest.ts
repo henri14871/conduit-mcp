@@ -169,6 +169,24 @@ export function register(server: McpServer, bridge: Bridge): void {
         params.action === "key_down" ||
         params.action === "key_up"
       ) {
+        if (
+          (params.action === "mouse_click" || params.action === "mouse_move") &&
+          (params.x === undefined || params.y === undefined)
+        ) {
+          return {
+            content: [{ type: "text", text: `${params.action} requires \`x\` and \`y\` parameters.` }],
+            isError: true,
+          };
+        }
+        if (
+          (params.action === "key_press" || params.action === "key_down" || params.action === "key_up") &&
+          !params.key
+        ) {
+          return {
+            content: [{ type: "text", text: `${params.action} requires a \`key\` parameter.` }],
+            isError: true,
+          };
+        }
         const result = (await bridge.send("virtual_input", {
           action: params.action,
           x: params.x,
@@ -181,6 +199,14 @@ export function register(server: McpServer, bridge: Bridge): void {
           content: [
             { type: "text", text: result.message ?? `Virtual input ${params.action}: ${result.status}` },
           ],
+        };
+      }
+
+      // ── execute validation ─────────────────────────────────────
+      if (params.action === "execute" && !params.code) {
+        return {
+          content: [{ type: "text", text: "execute action requires a `code` parameter." }],
+          isError: true,
         };
       }
 

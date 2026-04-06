@@ -617,9 +617,8 @@ function Dashboard._clearLog(self: Dashboard)
 		entry:Destroy()
 	end
 	self._logEntries = {}
-	self._commandCount = 0
-	self._errorCount = 0
-	self:_updateStats()
+	-- Intentionally do NOT reset _commandCount or _errorCount here;
+	-- clearing the visual log should not erase lifetime stats.
 end
 
 function Dashboard._addLogEntry(self: Dashboard, method: string, status: string, duration: number?, errorMessage: string?)

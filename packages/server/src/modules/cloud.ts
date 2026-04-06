@@ -140,7 +140,7 @@ export function register(server: McpServer): void {
       }
 
       if (params.action === "datastore_set") {
-        if (!params.datastoreName || !params.key) {
+        if (!params.datastoreName || !params.key || params.value === undefined) {
           return {
             content: [
               { type: "text", text: "datastore_set requires `datastoreName`, `key`, and `value`." },

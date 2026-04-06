@@ -5,11 +5,11 @@ import { applyTokenBudget } from "../utils/formatting.js";
 import { searchApi, formatSearchResults } from "../context/api-index.js";
 
 export function register(server: McpServer, bridge: Bridge): void {
-  let transactionOpen = false;
+  const transactionState = new Map<string, boolean>();
 
-  // If Studio disconnects, its transaction state is wiped — reset our guard
-  bridge.on("studio-disconnected", () => {
-    transactionOpen = false;
+  // If Studio disconnects, its transaction state is wiped — remove the entry
+  bridge.on("studio-disconnected", (info: { studioId: string }) => {
+    transactionState.delete(info.studioId);
   });
   server.registerTool(
     "undo_redo",
@@ -150,19 +150,26 @@ export function register(server: McpServer, bridge: Bridge): void {
       },
     },
     async (params) => {
+      const studioId = bridge.getActiveStudioId() ?? "_default";
+
       if (params.action === "begin") {
-        const result = (await bridge.send("begin_transaction", {
-          name: params.name,
-        })) as { transactionId: string; status: string };
-        transactionOpen = true;
-        return {
-          content: [
-            { type: "text", text: `Transaction started: **${result.transactionId}**\nAll subsequent writes will be grouped into one undo point. Call commit or rollback to finish.` },
-          ],
-        };
+        try {
+          const result = (await bridge.send("begin_transaction", {
+            name: params.name,
+          })) as { transactionId: string; status: string };
+          transactionState.set(studioId, true);
+          return {
+            content: [
+              { type: "text", text: `Transaction started: **${result.transactionId}**\nAll subsequent writes will be grouped into one undo point. Call commit or rollback to finish.` },
+            ],
+          };
+        } catch (err: unknown) {
+          transactionState.set(studioId, false);
+          throw err;
+        }
       }
 
-      if (!transactionOpen) {
+      if (!transactionState.get(studioId)) {
         return {
           content: [
             { type: "text", text: `No active transaction. Call \`begin\` first before calling \`${params.action}\`.` },
@@ -171,27 +178,33 @@ export function register(server: McpServer, bridge: Bridge): void {
       }
 
       if (params.action === "commit") {
-        const result = (await bridge.send("commit_transaction", {})) as {
-          status: string;
-        };
-        transactionOpen = false;
-        return {
-          content: [
-            { type: "text", text: `Transaction ${result.status}. All changes are now a single undo point.` },
-          ],
-        };
+        try {
+          const result = (await bridge.send("commit_transaction", {})) as {
+            status: string;
+          };
+          return {
+            content: [
+              { type: "text", text: `Transaction ${result.status}. All changes are now a single undo point.` },
+            ],
+          };
+        } finally {
+          transactionState.set(studioId, false);
+        }
       }
 
       // rollback
-      const result = (await bridge.send("rollback_transaction", {})) as {
-        status: string;
-      };
-      transactionOpen = false;
-      return {
-        content: [
-          { type: "text", text: `Transaction ${result.status}. All changes since begin have been reverted.` },
-        ],
-      };
+      try {
+        const result = (await bridge.send("rollback_transaction", {})) as {
+          status: string;
+        };
+        return {
+          content: [
+            { type: "text", text: `Transaction ${result.status}. All changes since begin have been reverted.` },
+          ],
+        };
+      } finally {
+        transactionState.set(studioId, false);
+      }
     },
   );
 }

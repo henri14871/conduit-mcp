@@ -77,6 +77,16 @@ export function register(server: McpServer, bridge: Bridge): void {
         return { content: [{ type: "text", text }] };
       }
 
+      // Terrain-specific validation
+      if (params.action === "terrain_fill") {
+        if (!params.region) {
+          return { content: [{ type: "text", text: "terrain_fill requires a `region` parameter." }], isError: true };
+        }
+        if (!params.material) {
+          return { content: [{ type: "text", text: "terrain_fill requires a `material` parameter." }], isError: true };
+        }
+      }
+
       // Terrain actions — map to the existing terrain command names
       const terrainAction = params.action.replace("terrain_", "");
       const result = (await bridge.send("terrain", {

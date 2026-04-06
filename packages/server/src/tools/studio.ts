@@ -64,7 +64,15 @@ export function register(server: McpServer, bridge: Bridge): void {
       },
     },
     async (params) => {
-      bridge.setActiveStudio(params.studioId);
+      try {
+        bridge.setActiveStudio(params.studioId);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: message }],
+          isError: true,
+        };
+      }
       const studios = bridge.getStudios();
       const studio = studios.find((s) => s.studioId === params.studioId);
       const name = studio?.placeName ?? "unknown";

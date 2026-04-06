@@ -52,7 +52,7 @@ export async function startServer(
     withCloud: options.withCloud,
     withRojo: options.withRojo,
   };
-  registerAllTools(server, bridge, toolOptions);
+  await registerAllTools(server, bridge, toolOptions);
 
   bridge.on("studio-connected", (info: StudioInfo) => {
     log.info(
@@ -76,13 +76,17 @@ export async function startServer(
   log.info("MCP server connected via stdio");
 
   // Graceful shutdown
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log.info("Shutting down...");
     await bridge.stop();
     await server.close();
     process.exit(0);
   };
 
+  bridge.on("shutdown", shutdown);
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }

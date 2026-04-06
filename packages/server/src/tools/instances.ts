@@ -218,6 +218,9 @@ function registerWrite(server: McpServer, bridge: Bridge): void {
         })) as {
           cloned: Array<{ path: string; className: string; name: string }>;
         };
+        if (result.cloned.length === 0) {
+          return { content: [{ type: "text", text: "No instances were cloned." }] };
+        }
         const text = result.cloned
           .map((r) => `- \`${r.path}\` (${r.className})`)
           .join("\n");
@@ -233,6 +236,9 @@ function registerWrite(server: McpServer, bridge: Bridge): void {
       })) as {
         created: Array<{ path: string; className: string; name: string }>;
       };
+      if (result.created.length === 0) {
+        return { content: [{ type: "text", text: "No instances were created." }] };
+      }
       const text = result.created
         .map((r) => `- \`${r.path}\` (${r.className})`)
         .join("\n");
@@ -333,6 +339,9 @@ function registerWrite(server: McpServer, bridge: Bridge): void {
       })) as {
         modified: Array<{ path: string; modified: string[] }>;
       };
+      if (result.modified.length === 0) {
+        return { content: [{ type: "text", text: "No instances were modified." }] };
+      }
       const text = result.modified
         .map((r) => `- \`${r.path}\` — modified: ${r.modified.join(", ")}`)
         .join("\n");
@@ -363,6 +372,9 @@ function registerWrite(server: McpServer, bridge: Bridge): void {
       const result = (await bridge.send("delete_instances", {
         paths: params.paths,
       })) as { deleted: string[] };
+      if (result.deleted.length === 0) {
+        return { content: [{ type: "text", text: "No instances were deleted." }] };
+      }
       const text = result.deleted
         .map((p) => `- \`${p}\` — deleted`)
         .join("\n");

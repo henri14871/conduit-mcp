@@ -18,11 +18,11 @@ export interface ToolRegistrationOptions {
   withRojo?: boolean;
 }
 
-export function registerAllTools(
+export async function registerAllTools(
   server: McpServer,
   bridge: Bridge,
   options: ToolRegistrationOptions = {},
-): void {
+): Promise<void> {
   const mode = options.mode ?? "full";
 
   // Read-only tools — always registered
@@ -46,13 +46,19 @@ export function registerAllTools(
 
   // Optional modules (loaded dynamically to avoid bundling when unused)
   if (options.withCloud) {
-    import("../modules/cloud.js")
-      .then((mod) => mod.register(server))
-      .catch((err) => log.error("Failed to load cloud module:", err));
+    try {
+      const mod = await import("../modules/cloud.js");
+      mod.register(server);
+    } catch (err) {
+      log.error("Failed to load cloud module:", err);
+    }
   }
   if (options.withRojo) {
-    import("../modules/rojo.js")
-      .then((mod) => mod.register(server))
-      .catch((err) => log.error("Failed to load rojo module:", err));
+    try {
+      const mod = await import("../modules/rojo.js");
+      mod.register(server);
+    } catch (err) {
+      log.error("Failed to load rojo module:", err);
+    }
   }
 }

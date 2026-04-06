@@ -73,6 +73,12 @@ connection:onStatusChange(function(status)
 	dashboard:updateStatus(status)
 	dashboard:updateStudioInfo(connection:getPort(), game.Name)
 
+	-- Cancel health polling whenever we leave "connected" state
+	if status ~= "connected" and healthPollThread then
+		task.cancel(healthPollThread)
+		healthPollThread = nil
+	end
+
 	if status == "connected" then
 		dashboard:startUptime()
 

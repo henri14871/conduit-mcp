@@ -86,6 +86,9 @@ local function register(router: any)
 			local outputLines: { { message: string, messageType: string } } = {}
 			local connection: RBXScriptConnection? = nil
 
+			-- NOTE: LogService.MessageOut is global — it may capture unrelated messages
+			-- from other threads during execution. This is a known Roblox limitation.
+			-- We mitigate by disconnecting immediately after pcall returns.
 			connection = LogService.MessageOut:Connect(function(message: string, messageType: Enum.MessageType)
 				table.insert(outputLines, {
 					message = message,
@@ -324,7 +327,7 @@ local function register(router: any)
 			serialized = { Type = "Vector2", X = result.X, Y = result.Y }
 		elseif resultType == "CFrame" then
 			local pos = result.Position
-			local rx, ry, rz = result:ToOrientation()
+			local rx, ry, rz = result:ToEulerAnglesYXZ()
 			serialized = {
 				Type = "CFrame",
 				Position = { X = pos.X, Y = pos.Y, Z = pos.Z },

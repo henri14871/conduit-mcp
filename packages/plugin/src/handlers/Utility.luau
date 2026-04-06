@@ -35,7 +35,7 @@ local function register(router: any)
 		else
 			error(`Unknown undo_redo action: {action}. Expected "undo" or "redo"`)
 		end
-	end, false)
+	end, true)
 
 	-- ── screenshot ───────────────────────────────────────────────────
 	router:register("screenshot", function(_params: { [string]: any }?)

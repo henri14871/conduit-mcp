@@ -26,7 +26,7 @@ export function formatTree(
 
   let result = line + "\n";
 
-  if (data.children && depth > 0) {
+  if (data.children && depth >= 0) {
     for (const child of data.children) {
       result += formatTree(child, depth - 1, indent + "  ");
     }
@@ -55,8 +55,8 @@ export function applyTokenBudget(
   text: string,
   maxTokens?: number,
 ): string {
-  const budget = maxTokens ?? DEFAULT_TOKEN_BUDGET;
-  const { text: result } = truncateToTokenBudget(text, budget);
+  if (maxTokens === undefined) return text;
+  const { text: result } = truncateToTokenBudget(text, maxTokens);
   return result;
 }
 

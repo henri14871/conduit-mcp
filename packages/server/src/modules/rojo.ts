@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { log } from "../utils/logger.js";
 
@@ -50,7 +51,7 @@ export function register(server: McpServer): void {
           .describe("Output file path (for 'build' action)"),
       }),
       annotations: {
-        readOnlyHint: true,
+        readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
@@ -88,6 +89,14 @@ export function register(server: McpServer): void {
         if (!params.output) {
           return {
             content: [{ type: "text", text: "build action requires an `output` path." }],
+          };
+        }
+        const cwd = process.cwd();
+        const resolved = path.resolve(cwd, params.output);
+        if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
+          return {
+            content: [{ type: "text", text: `Output path "${params.output}" escapes the working directory.` }],
+            isError: true,
           };
         }
         const args = ["build"];

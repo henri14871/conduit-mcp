@@ -7,21 +7,25 @@ local Types = require(script.Parent.Types)
 type ConnectionStatus = "disconnected" | "connecting" | "connected"
 
 local HEARTBEAT_INTERVAL = 5
-local MAX_RECONNECT_DELAY = 30
+local MAX_RECONNECT_DELAY = 10
 local HTTP_POLL_INTERVAL = 0.5
 local WS_FAILURE_THRESHOLD = 3
+local PORT_SCAN_RANGE = 10 -- scan basePort .. basePort+10
+local HTTP_FALLBACK_WS_RETRY_INTERVAL = 15 -- try WebSocket again after this many seconds in HTTP mode
 
 local Connection = {}
 Connection.__index = Connection
 
 export type Connection = typeof(setmetatable({} :: {
 	_port: number,
+	_basePort: number,
 	_studioId: string,
 	_status: ConnectionStatus,
 	_ws: any?,
 	_reconnectDelay: number,
 	_wsFailureCount: number,
 	_useHttpFallback: boolean,
+	_httpFallbackStartTime: number,
 	_heartbeatThread: thread?,
 	_pollThread: thread?,
 	_connectThread: thread?,
@@ -33,12 +37,14 @@ export type Connection = typeof(setmetatable({} :: {
 function Connection.new(port: number): Connection
 	local self = setmetatable({
 		_port = port,
+		_basePort = port,
 		_studioId = HttpService:GenerateGUID(false),
 		_status = "disconnected" :: ConnectionStatus,
 		_ws = nil,
 		_reconnectDelay = 1,
 		_wsFailureCount = 0,
 		_useHttpFallback = false,
+		_httpFallbackStartTime = 0,
 		_heartbeatThread = nil,
 		_pollThread = nil,
 		_connectThread = nil,
@@ -74,7 +80,7 @@ function Connection.getPort(self: Connection): number
 end
 
 function Connection.setPort(self: Connection, port: number)
-	if self._port == port then
+	if self._basePort == port then
 		return
 	end
 	local wasConnected = self._shouldRun
@@ -82,6 +88,7 @@ function Connection.setPort(self: Connection, port: number)
 		self:disconnect()
 	end
 	self._port = port
+	self._basePort = port
 	if wasConnected then
 		self:connect()
 	end
@@ -121,9 +128,15 @@ function Connection.disconnect(self: Connection)
 		self._pollThread = nil
 	end
 
-	if self._connectThread then
-		task.cancel(self._connectThread)
-		self._connectThread = nil
+	-- Don't force-cancel _connectThread here — it may be the currently executing thread.
+	-- Setting _shouldRun = false (above) will cause the loop to exit naturally.
+	-- Defer cancellation as a safety net in case the thread is stuck yielding.
+	local threadToCancel = self._connectThread
+	self._connectThread = nil
+	if threadToCancel then
+		task.defer(function()
+			task.cancel(threadToCancel)
+		end)
 	end
 end
 
@@ -180,8 +193,53 @@ function Connection._fireMessage(self: Connection, data: any)
 	end
 end
 
+--[[ Scan basePort .. basePort+PORT_SCAN_RANGE for a live Conduit /health endpoint.
+     Returns the first port that responds, or nil if none found. ]]
+function Connection._discoverPort(self: Connection): number?
+	for offset = 0, PORT_SCAN_RANGE do
+		local tryPort = self._basePort + offset
+		local ok, response = pcall(function()
+			return HttpService:RequestAsync({
+				Url = "http://localhost:" .. tryPort .. "/health",
+				Method = "GET",
+			})
+		end)
+		if ok and response and response.StatusCode == 200 then
+			local decodeOk, data = pcall(function()
+				return HttpService:JSONDecode(response.Body)
+			end)
+			-- Verify it's actually a Conduit server (has "status" field)
+			if decodeOk and data and data.status == "ok" then
+				if tryPort ~= self._port then
+					print("[Conduit] Discovered server on port " .. tryPort .. " (configured: " .. self._basePort .. ")")
+				end
+				return tryPort
+			end
+		end
+	end
+	return nil
+end
+
 function Connection._connectLoop(self: Connection)
 	while self._shouldRun do
+		-- Discover the actual server port before each connection attempt
+		local discoveredPort = self:_discoverPort()
+		if discoveredPort then
+			self._port = discoveredPort
+		else
+			self._port = self._basePort -- reset to base for next scan
+		end
+
+		-- If we've been in HTTP fallback long enough, try WebSocket again
+		if self._useHttpFallback then
+			local elapsed = os.clock() - self._httpFallbackStartTime
+			if elapsed >= HTTP_FALLBACK_WS_RETRY_INTERVAL then
+				print("[Conduit] Retrying WebSocket after HTTP fallback period")
+				self._useHttpFallback = false
+				self._wsFailureCount = 0
+			end
+		end
+
 		if self._useHttpFallback then
 			self:_connectHttp()
 		else
@@ -192,12 +250,14 @@ function Connection._connectLoop(self: Connection)
 			break
 		end
 
-		-- Wait before reconnecting
+		-- Wait before reconnecting (capped at MAX_RECONNECT_DELAY = 10s)
 		local delay = self._reconnectDelay
 		self._reconnectDelay = math.min(self._reconnectDelay * 2, MAX_RECONNECT_DELAY)
 		warn("[Conduit] Reconnecting in " .. delay .. "s...")
 		task.wait(delay)
 	end
+
+	self._connectThread = nil
 end
 
 function Connection._connectWebSocket(self: Connection)
@@ -215,6 +275,7 @@ function Connection._connectWebSocket(self: Connection)
 		if self._wsFailureCount >= WS_FAILURE_THRESHOLD then
 			warn("[Conduit] Switching to HTTP fallback after " .. WS_FAILURE_THRESHOLD .. " WebSocket failures")
 			self._useHttpFallback = true
+			self._httpFallbackStartTime = os.clock()
 		end
 		return
 	end
@@ -251,6 +312,15 @@ function Connection._connectWebSocket(self: Connection)
 					ws:Send(HttpService:JSONEncode({ type = "heartbeat" }))
 				end)
 				if not hbOk then
+					warn("[Conduit] Heartbeat send failed — connection lost")
+					pcall(function()
+						ws:Close()
+					end)
+					self._ws = nil
+					closed = true
+					if self._shouldRun then
+						self:_setStatus("disconnected")
+					end
 					break
 				end
 				task.wait(HEARTBEAT_INTERVAL)
@@ -285,6 +355,26 @@ function Connection._connectWebSocket(self: Connection)
 		warn("[Conduit] WebSocket error:", err)
 	end)
 
+	-- Wait until connection opens, with a 10-second timeout
+	local waitStart = os.clock()
+	while self._shouldRun and not closed and not connected do
+		if os.clock() - waitStart > 10 then
+			warn("[Conduit] WebSocket connection timed out after 10s")
+			pcall(function()
+				ws:Close()
+			end)
+			self._ws = nil
+			self._wsFailureCount += 1
+			if self._wsFailureCount >= WS_FAILURE_THRESHOLD then
+				warn("[Conduit] Switching to HTTP fallback after " .. WS_FAILURE_THRESHOLD .. " WebSocket failures")
+				self._useHttpFallback = true
+				self._httpFallbackStartTime = os.clock()
+			end
+			return
+		end
+		task.wait(0.5)
+	end
+
 	-- Wait until connection closes or we disconnect
 	while self._shouldRun and not closed do
 		task.wait(1)
@@ -295,7 +385,7 @@ function Connection._connectHttp(self: Connection)
 	self:_setStatus("connecting")
 
 	-- Check if server is available
-	local healthOk = pcall(function()
+	local healthOk, healthResult = pcall(function()
 		local response = HttpService:RequestAsync({
 			Url = "http://localhost:" .. self._port .. "/health",
 			Method = "GET",
@@ -303,7 +393,7 @@ function Connection._connectHttp(self: Connection)
 		return response.StatusCode == 200
 	end)
 
-	if not healthOk then
+	if not healthOk or not healthResult then
 		return
 	end
 
@@ -315,7 +405,9 @@ function Connection._connectHttp(self: Connection)
 	while self._shouldRun and self._status == "connected" do
 		local pollOk, response = pcall(function()
 			return HttpService:RequestAsync({
-				Url = "http://localhost:" .. self._port .. "/poll?studioId=" .. self._studioId,
+				Url = "http://localhost:" .. self._port .. "/poll?studioId=" .. self._studioId
+				.. "&placeId=" .. tostring(game.PlaceId)
+				.. "&placeName=" .. HttpService:UrlEncode(game.Name or "Unknown"),
 				Method = "GET",
 			})
 		end)
@@ -343,8 +435,8 @@ function Connection._connectHttp(self: Connection)
 	end
 end
 
-function Connection._httpPost(self: Connection, path: string, body: string)
-	pcall(function()
+function Connection._httpPost(self: Connection, path: string, body: string): boolean
+	local ok = pcall(function()
 		HttpService:RequestAsync({
 			Url = "http://localhost:" .. self._port .. path,
 			Method = "POST",
@@ -352,6 +444,7 @@ function Connection._httpPost(self: Connection, path: string, body: string)
 			Body = body,
 		})
 	end)
+	return ok
 end
 
 return Connection

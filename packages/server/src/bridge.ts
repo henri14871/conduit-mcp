@@ -15,9 +15,10 @@ import { log } from "./utils/logger.js";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const HEARTBEAT_CHECK_INTERVAL_MS = 5_000;
-const HEARTBEAT_TIMEOUT_MS = 15_000;
+const HEARTBEAT_TIMEOUT_MS = 35_000;
 const LONG_POLL_TIMEOUT_MS = 25_000;
 const MAX_PORT_RETRIES = 10;
+const REGISTRATION_TIMEOUT_MS = 10_000;
 
 interface StudioConnection {
   ws: WebSocket;
@@ -91,7 +92,39 @@ export class Bridge extends EventEmitter {
 
   // ── Server lifecycle ───────────────────────────────────────────
 
+  /**
+   * Try to shut down a stale Conduit instance on the target port.
+   * Returns true if the port was freed (or was already free).
+   */
+  private async evictStaleInstance(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const req = http.request(
+        {
+          hostname: "127.0.0.1",
+          port,
+          path: "/shutdown",
+          method: "POST",
+          timeout: 2_000,
+        },
+        (res) => {
+          res.resume(); // drain
+          // Give the old server a moment to release the port
+          setTimeout(() => resolve(true), 500);
+        },
+      );
+      req.on("error", () => resolve(false)); // not running or unreachable
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false); // timed out — bind will fail if port is still held
+      });
+      req.end();
+    });
+  }
+
   async start(): Promise<number> {
+    // Kill any stale Conduit instance on our target port before binding
+    await this.evictStaleInstance(this.port);
+
     return new Promise((resolve, reject) => {
       let attempts = 0;
       const tryPort = (port: number) => {
@@ -102,6 +135,9 @@ export class Bridge extends EventEmitter {
         server.once("error", (err: NodeJS.ErrnoException) => {
           if (err.code === "EADDRINUSE" && attempts < MAX_PORT_RETRIES) {
             attempts++;
+            log.warn(
+              `Port ${port} still in use after eviction — trying ${port + 1}`,
+            );
             tryPort(port + 1);
           } else {
             reject(err);
@@ -257,11 +293,23 @@ export class Bridge extends EventEmitter {
     log.info("New WebSocket connection — waiting for registration");
     this.pendingWs.add(ws);
 
+    // Close unregistered connections after timeout
+    const registrationTimer = setTimeout(() => {
+      if (this.pendingWs.has(ws)) {
+        log.warn(
+          "WebSocket failed to register within timeout — closing",
+        );
+        this.pendingWs.delete(ws);
+        ws.close(1008, "Registration timeout");
+      }
+    }, REGISTRATION_TIMEOUT_MS);
+
     const onFirstMessage = (data: Buffer | string) => {
       try {
         const msg = JSON.parse(data.toString());
 
         if (isStudioRegistration(msg)) {
+          clearTimeout(registrationTimer);
           ws.removeListener("message", onFirstMessage);
           this.pendingWs.delete(ws);
           this.registerStudio(ws, {
@@ -274,6 +322,7 @@ export class Bridge extends EventEmitter {
         }
 
         // Legacy plugin (no registration) — assign synthetic ID
+        clearTimeout(registrationTimer);
         ws.removeListener("message", onFirstMessage);
         this.pendingWs.delete(ws);
         const syntheticId = `studio-legacy-${Date.now()}`;
@@ -294,14 +343,21 @@ export class Bridge extends EventEmitter {
 
     ws.on("message", onFirstMessage);
 
-    ws.on("close", () => {
-      // If it closed before registering
+    const onEarlyClose = () => {
+      clearTimeout(registrationTimer);
       this.pendingWs.delete(ws);
-    });
+    };
 
-    ws.on("error", (err) => {
+    const onEarlyError = (err: Error) => {
       log.warn("WebSocket error:", err.message);
-    });
+    };
+
+    ws.on("close", onEarlyClose);
+    ws.on("error", onEarlyError);
+
+    // Expose refs so registerStudio can remove them after successful registration
+    (ws as any).__earlyClose = onEarlyClose;
+    (ws as any).__earlyError = onEarlyError;
   }
 
   private registerStudio(ws: WebSocket, info: StudioInfo): void {
@@ -329,6 +385,16 @@ export class Bridge extends EventEmitter {
     );
 
     this.startHeartbeatMonitor();
+
+    // Remove early close/error listeners from handleWsConnection to avoid duplicates
+    if ((ws as any).__earlyClose) {
+      ws.removeListener("close", (ws as any).__earlyClose);
+      delete (ws as any).__earlyClose;
+    }
+    if ((ws as any).__earlyError) {
+      ws.removeListener("error", (ws as any).__earlyError);
+      delete (ws as any).__earlyError;
+    }
 
     ws.on("message", (data) => {
       try {
@@ -371,22 +437,24 @@ export class Bridge extends EventEmitter {
   }
 
   private handlePluginMessage(msg: unknown): void {
-    if (isBridgeResponse(msg)) {
-      const pending = this.pendingRequests.get(msg.id);
-      if (pending) {
-        clearTimeout(pending.timer);
-        this.pendingRequests.delete(msg.id);
-        pending.resolve(msg.result);
-      }
-      return;
-    }
-
+    // Check isBridgeError first — both error and response have "id",
+    // but error also has "error" which would be lost if checked second.
     if (isBridgeError(msg)) {
       const pending = this.pendingRequests.get(msg.id);
       if (pending) {
         clearTimeout(pending.timer);
         this.pendingRequests.delete(msg.id);
         pending.reject(new Error(`${msg.error.code}: ${msg.error.message}`));
+      }
+      return;
+    }
+
+    if (isBridgeResponse(msg)) {
+      const pending = this.pendingRequests.get(msg.id);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingRequests.delete(msg.id);
+        pending.resolve(msg.result);
       }
       return;
     }
@@ -405,7 +473,8 @@ export class Bridge extends EventEmitter {
             log.warn(
               `Heartbeat timeout for studio "${studioId}" — disconnecting`,
             );
-            studio.ws.terminate();
+            studio.ws.close(1001, "Heartbeat timeout");
+            this.lastHeartbeats.delete(studioId);
           } else if (this.httpStudios.has(studioId)) {
             log.warn(
               `Heartbeat timeout for HTTP studio "${studioId}" — evicting`,
@@ -438,8 +507,15 @@ export class Bridge extends EventEmitter {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): void {
-    // CORS headers for Studio plugin
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    // CORS headers for Studio plugin — restrict to localhost origins
+    const origin = req.headers.origin;
+    if (
+      origin &&
+      (origin.startsWith("http://localhost") ||
+        origin.startsWith("http://127.0.0.1"))
+    ) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    }
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
@@ -451,6 +527,23 @@ export class Bridge extends EventEmitter {
 
     const parsedUrl = new URL(req.url ?? "/", `http://127.0.0.1`);
     const pathname = parsedUrl.pathname;
+
+    if (req.method === "POST" && pathname === "/shutdown") {
+      // Block browser-originated requests (CSRF protection)
+      if (req.headers.origin) {
+        res.writeHead(403);
+        res.end("Forbidden");
+        return;
+      }
+      log.info("Received shutdown request from new Conduit instance");
+      res.writeHead(200);
+      res.end("ok");
+      // Graceful shutdown — let the response flush, then emit event
+      setImmediate(() => {
+        this.emit("shutdown");
+      });
+      return;
+    }
 
     if (req.method === "GET" && pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -476,6 +569,12 @@ export class Bridge extends EventEmitter {
     }
 
     if (req.method === "POST" && pathname === "/result") {
+      // Block browser-originated requests (CSRF protection)
+      if (req.headers.origin) {
+        res.writeHead(403);
+        res.end("Forbidden");
+        return;
+      }
       this.handleResult(req, res);
       return;
     }
@@ -493,8 +592,10 @@ export class Bridge extends EventEmitter {
           connectedAt: Date.now(),
         };
         this.httpStudios.set(studioId, info);
+        this.lastHeartbeats.set(studioId, Date.now());
         this.emit("studio-connected", info);
         log.info(`HTTP-only studio registered: ${studioId}`);
+        this.startHeartbeatMonitor();
       }
       this.lastHeartbeats.set(studioId, Date.now());
       if (this.activeStudioId === null) {
@@ -552,9 +653,21 @@ export class Bridge extends EventEmitter {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): void {
+    const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let totalSize = 0;
+    req.on("data", (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_BODY_SIZE) {
+        req.destroy();
+        res.writeHead(413);
+        res.end("Request body too large");
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => {
+      if (totalSize > MAX_BODY_SIZE) return;
       const body = Buffer.concat(chunks).toString("utf-8");
       try {
         const msg = JSON.parse(body);
