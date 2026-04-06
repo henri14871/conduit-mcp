@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/conduit-mcp)](https://www.npmjs.com/package/conduit-mcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/henri-knightco/conduit-mcp)](https://github.com/henri-knightco/conduit-mcp)
+[![GitHub stars](https://img.shields.io/github/stars/henri14871/conduit-mcp)](https://github.com/henri14871/conduit-mcp)
 
 **The first Roblox Studio MCP built on WebSocket not polling.**
 
