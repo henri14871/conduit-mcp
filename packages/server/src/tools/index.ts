@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Bridge } from "../bridge.js";
+import { log } from "../utils/logger.js";
 
 import { register as registerExplore } from "./explore.js";
 import { register as registerInstances, registerReadOnly as registerInstancesReadOnly } from "./instances.js";
@@ -45,9 +46,13 @@ export function registerAllTools(
 
   // Optional modules (loaded dynamically to avoid bundling when unused)
   if (options.withCloud) {
-    import("../modules/cloud.js").then((mod) => mod.register(server));
+    import("../modules/cloud.js")
+      .then((mod) => mod.register(server))
+      .catch((err) => log.error("Failed to load cloud module:", err));
   }
   if (options.withRojo) {
-    import("../modules/rojo.js").then((mod) => mod.register(server));
+    import("../modules/rojo.js")
+      .then((mod) => mod.register(server))
+      .catch((err) => log.error("Failed to load rojo module:", err));
   }
 }

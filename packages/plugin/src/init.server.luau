@@ -59,6 +59,8 @@ require(script.handlers.Utility).register(router)
 
 -- ── Wire dashboard to connection ────────────────────────────────
 
+local healthPollThread: thread? = nil
+
 connection:onStatusChange(function(status)
 	-- Update toolbar button active state
 	if status == "connected" then
@@ -72,15 +74,41 @@ connection:onStatusChange(function(status)
 	dashboard:updateStudioInfo(connection:getPort(), game.Name)
 
 	if status == "connected" then
+		dashboard:startUptime()
+
+		-- Start health polling for studio count
+		if healthPollThread then
+			task.cancel(healthPollThread)
+		end
+		healthPollThread = task.spawn(function()
+			while connection:isConnected() do
+				local health = connection:pollHealth()
+				if health then
+					local myId = connection:getStudioId()
+					local isActive = health.activeStudioId == myId
+					dashboard:updateStudiosInfo(health.studioCount, isActive)
+				end
+				task.wait(10)
+			end
+		end)
+
 		print("[Conduit] Connected to MCP server")
 	elseif status == "disconnected" then
+		dashboard:stopUptime()
+		dashboard:updateStudiosInfo(0, false)
+
+		if healthPollThread then
+			task.cancel(healthPollThread)
+			healthPollThread = nil
+		end
+
 		warn("[Conduit] Disconnected from MCP server")
 	end
 end)
 
 -- Wire activity log
 router:onActivity(function(entry)
-	dashboard:logActivity(entry.method, entry.status, entry.duration)
+	dashboard:logActivity(entry.method, entry.status, entry.duration, entry.errorMessage)
 end)
 
 -- Wire dashboard buttons
@@ -119,5 +147,10 @@ end
 -- ── Cleanup ──────────────────────────────────────────────────────
 
 plugin.Unloading:Connect(function()
+	dashboard:stopUptime()
+	if healthPollThread then
+		task.cancel(healthPollThread)
+		healthPollThread = nil
+	end
 	connection:disconnect()
 end)

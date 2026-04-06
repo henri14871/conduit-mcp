@@ -15,25 +15,64 @@ local function register(router: any)
 				return { status = "already_running" }
 			end
 
-			local ok, err = pcall(function()
-				RunService:Run()
-			end)
-			if not ok then
-				error(`Failed to start playtest: {err}`)
-			end
+			local mode: string = params.mode or "play"
 
-			return { status = "started" }
+			if mode == "run" then
+				local ok, err = pcall(function()
+					RunService:Run()
+				end)
+				if not ok then
+					error(`Failed to start Run mode: {err}`)
+				end
+				return { status = "started", mode = "run" }
+			else
+				-- Play mode (F5) via StudioTestService
+				local ok, StudioTestService = pcall(function()
+					return game:GetService("StudioTestService")
+				end)
+				if not ok or not StudioTestService then
+					-- Fallback to Run mode if StudioTestService is unavailable
+					local runOk, runErr = pcall(function()
+						RunService:Run()
+					end)
+					if not runOk then
+						error(`Failed to start playtest: {runErr}`)
+					end
+					return { status = "started", mode = "run", message = "StudioTestService unavailable, fell back to Run mode" }
+				end
+
+				-- ExecutePlayModeAsync yields until the test ends, so spawn it
+				task.spawn(function()
+					pcall(function()
+						(StudioTestService :: any):ExecutePlayModeAsync(nil)
+					end)
+				end)
+
+				-- Wait briefly for the playtest to start
+				task.wait(0.5)
+
+				return { status = "started", mode = "play" }
+			end
 
 		elseif action == "stop" then
 			if not RunService:IsRunning() then
 				return { status = "already_stopped" }
 			end
 
-			local ok, err = pcall(function()
-				RunService:Stop()
+			-- Try StudioTestService:EndTest first, fall back to RunService:Stop
+			local stopped = false
+			pcall(function()
+				local StudioTestService = game:GetService("StudioTestService")
+				;(StudioTestService :: any):EndTest(nil)
+				stopped = true
 			end)
-			if not ok then
-				error(`Failed to stop playtest: {err}`)
+			if not stopped then
+				local ok, err = pcall(function()
+					RunService:Stop()
+				end)
+				if not ok then
+					error(`Failed to stop playtest: {err}`)
+				end
 			end
 
 			return { status = "stopped" }

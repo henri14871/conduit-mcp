@@ -52,8 +52,11 @@ export class Bridge extends EventEmitter {
   }
 
   get isConnected(): boolean {
-    const studio = this.getActiveStudio();
-    return studio !== undefined && studio.ws.readyState === WebSocket.OPEN;
+    // True if ANY studio is connected (WebSocket or HTTP)
+    for (const [, studio] of this.studios) {
+      if (studio.ws.readyState === WebSocket.OPEN) return true;
+    }
+    return this.httpStudios.size > 0;
   }
 
   get listeningPort(): number {
@@ -235,28 +238,17 @@ export class Bridge extends EventEmitter {
       return active;
     }
 
-    // Auto-select if exactly one studio is connected
-    if (this.studios.size === 1) {
-      const [studioId, studio] = this.studios.entries().next().value!;
+    // Active studio is gone or stale — try to auto-select any open studio
+    for (const [studioId, studio] of this.studios) {
       if (studio.ws.readyState === WebSocket.OPEN) {
         this.activeStudioId = studioId;
+        log.info(`Auto-selected active studio: ${studioId}`);
         return studio;
       }
     }
 
     // No valid WebSocket target — will fall through to HTTP fallback
-    if (this.studios.size === 0) {
-      return undefined;
-    }
-
-    // Multiple studios, none active
-    throw new Error(
-      `Multiple Studio instances connected but none is active. Use set_active_studio to choose one. Connected: ${Array.from(
-        this.studios.values(),
-      )
-        .map((s) => `${s.info.studioId} (${s.info.placeName ?? "unknown"})`)
-        .join(", ")}`,
-    );
+    return undefined;
   }
 
   // ── WebSocket handling ─────────────────────────────────────────
@@ -284,7 +276,7 @@ export class Bridge extends EventEmitter {
         // Legacy plugin (no registration) — assign synthetic ID
         ws.removeListener("message", onFirstMessage);
         this.pendingWs.delete(ws);
-        const syntheticId = "studio-1";
+        const syntheticId = `studio-legacy-${Date.now()}`;
         log.info(
           "Legacy plugin detected (no registration), assigning ID: " +
             syntheticId,
@@ -359,9 +351,9 @@ export class Bridge extends EventEmitter {
         this.emit("studio-disconnected", info);
         log.info(`Studio disconnected: ${studioId}`);
 
-        // If the active studio disconnected, auto-switch
+        // If the active studio disconnected, auto-switch to any remaining
         if (this.activeStudioId === studioId) {
-          if (this.studios.size === 1) {
+          if (this.studios.size > 0) {
             this.activeStudioId = this.studios.keys().next().value!;
             log.info(
               `Auto-switched active studio to: ${this.activeStudioId}`,
@@ -468,6 +460,7 @@ export class Bridge extends EventEmitter {
           connected: this.isConnected,
           port: this.actualPort,
           studios: this.getStudios(),
+          activeStudioId: this.activeStudioId,
         }),
       );
       return;
@@ -559,9 +552,10 @@ export class Bridge extends EventEmitter {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): void {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf-8");
       try {
         const msg = JSON.parse(body);
         this.handlePluginMessage(msg);

@@ -5,6 +5,12 @@ import { applyTokenBudget } from "../utils/formatting.js";
 import { searchApi, formatSearchResults } from "../context/api-index.js";
 
 export function register(server: McpServer, bridge: Bridge): void {
+  let transactionOpen = false;
+
+  // If Studio disconnects, its transaction state is wiped — reset our guard
+  bridge.on("studio-disconnected", () => {
+    transactionOpen = false;
+  });
   server.registerTool(
     "undo_redo",
     {
@@ -120,10 +126,12 @@ export function register(server: McpServer, bridge: Bridge): void {
       title: "Transaction Control",
       description:
         "Group multiple mutating tool calls into a single Ctrl+Z undo point.\n\n" +
+        "Usage: ALWAYS call `begin` first, then make your changes, then call `commit` or `rollback`. " +
+        "Calling `commit` or `rollback` without a prior `begin` will error.\n\n" +
         "Actions:\n" +
         "- `begin`: Start a transaction. All subsequent writes share one undo recording.\n" +
-        "- `commit`: Finish the transaction and commit all changes as one undo point.\n" +
-        "- `rollback`: Cancel the transaction and undo all changes made since begin.\n\n" +
+        "- `commit`: Finish an open transaction and commit all changes as one undo point. Requires a prior `begin`.\n" +
+        "- `rollback`: Cancel an open transaction and undo all changes made since begin. Requires a prior `begin`.\n\n" +
         "Transactions auto-rollback after 60 seconds if not committed.",
       inputSchema: z.object({
         action: z
@@ -146,9 +154,18 @@ export function register(server: McpServer, bridge: Bridge): void {
         const result = (await bridge.send("begin_transaction", {
           name: params.name,
         })) as { transactionId: string; status: string };
+        transactionOpen = true;
         return {
           content: [
             { type: "text", text: `Transaction started: **${result.transactionId}**\nAll subsequent writes will be grouped into one undo point. Call commit or rollback to finish.` },
+          ],
+        };
+      }
+
+      if (!transactionOpen) {
+        return {
+          content: [
+            { type: "text", text: `No active transaction. Call \`begin\` first before calling \`${params.action}\`.` },
           ],
         };
       }
@@ -157,6 +174,7 @@ export function register(server: McpServer, bridge: Bridge): void {
         const result = (await bridge.send("commit_transaction", {})) as {
           status: string;
         };
+        transactionOpen = false;
         return {
           content: [
             { type: "text", text: `Transaction ${result.status}. All changes are now a single undo point.` },
@@ -168,6 +186,7 @@ export function register(server: McpServer, bridge: Bridge): void {
       const result = (await bridge.send("rollback_transaction", {})) as {
         status: string;
       };
+      transactionOpen = false;
       return {
         content: [
           { type: "text", text: `Transaction ${result.status}. All changes since begin have been reverted.` },

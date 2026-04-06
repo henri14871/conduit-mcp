@@ -11,7 +11,7 @@ export function register(server: McpServer, bridge: Bridge): void {
       description:
         "Control Roblox Studio playtesting and simulate user input.\n\n" +
         "Actions:\n" +
-        "- `start`: Begin a playtest session.\n" +
+        "- `start`: Begin a playtest session. Defaults to Play mode (F5, full client with player character). Set mode='run' for Run mode (F8, server-only, no player).\n" +
         "- `stop`: End the current playtest.\n" +
         "- `execute`: Run Lua code in the running game context.\n" +
         "- `get_output`: Get console/log output from Studio (works in edit mode and during playtest).\n" +
@@ -26,6 +26,10 @@ export function register(server: McpServer, bridge: Bridge): void {
         action: z
           .enum(["start", "stop", "execute", "get_output", "inspect", "navigate", "mouse_click", "mouse_move", "key_press", "key_down", "key_up"])
           .describe("Playtest action"),
+        mode: z
+          .enum(["play", "run"])
+          .default("play")
+          .describe("Playtest mode: 'play' (F5, full client with player) or 'run' (F8, server-only). Default: play"),
         code: z
           .string()
           .optional()
@@ -184,8 +188,11 @@ export function register(server: McpServer, bridge: Bridge): void {
       const result = (await bridge.send("playtest", {
         action: params.action,
         code: params.code,
+        mode: params.mode,
       })) as {
         status: string;
+        mode?: string;
+        message?: string;
         result?: string;
         error?: string;
         output?: Array<{ message: string; messageType: string }>;
@@ -212,7 +219,9 @@ export function register(server: McpServer, bridge: Bridge): void {
             : `Execution completed (${result.status})`;
         text = applyTokenBudget(text, undefined);
       } else {
-        text = `Playtest ${params.action}: ${result.status}`;
+        const modeInfo = result.mode ? ` (${result.mode} mode)` : "";
+        const extra = result.message ? `\n${result.message}` : "";
+        text = `Playtest ${params.action}${modeInfo}: ${result.status}${extra}`;
       }
 
       return { content: [{ type: "text", text }] };

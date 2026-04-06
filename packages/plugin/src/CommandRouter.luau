@@ -18,6 +18,7 @@ export type ActivityEntry = {
 	status: "running" | "success" | "error",
 	startTime: number,
 	duration: number?,
+	errorMessage: string?,
 }
 
 export type CommandRouter = typeof(setmetatable({} :: {
@@ -164,7 +165,7 @@ function CommandRouter._handleMessage(self: CommandRouter, data: any)
 				self:_fireActivity({ method = method, status = "success", startTime = startTime, duration = duration })
 				self:_sendResult(id, result)
 			else
-				self:_fireActivity({ method = method, status = "error", startTime = startTime, duration = duration })
+				self:_fireActivity({ method = method, status = "error", startTime = startTime, duration = duration, errorMessage = tostring(result) })
 				self:_sendError(id, "HANDLER_ERROR", tostring(result))
 			end
 		end)
@@ -212,7 +213,7 @@ function CommandRouter._processMutationQueue(self: CommandRouter)
 			self:_fireActivity({ method = item.method, status = "success", startTime = startTime, duration = duration })
 			self:_sendResult(item.id, result)
 		else
-			self:_fireActivity({ method = item.method, status = "error", startTime = startTime, duration = duration })
+			self:_fireActivity({ method = item.method, status = "error", startTime = startTime, duration = duration, errorMessage = tostring(result) })
 			self:_sendError(item.id, "HANDLER_ERROR", tostring(result))
 		end
 

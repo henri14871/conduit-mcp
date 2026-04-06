@@ -140,6 +140,28 @@ function Connection.send(self: Connection, message: string)
 	end
 end
 
+function Connection.pollHealth(self: Connection): { studioCount: number, activeStudioId: string? }?
+	local ok, response = pcall(function()
+		return HttpService:RequestAsync({
+			Url = "http://localhost:" .. self._port .. "/health",
+			Method = "GET",
+		})
+	end)
+	if not ok or not response or response.StatusCode ~= 200 then
+		return nil
+	end
+	local decodeOk, data = pcall(function()
+		return HttpService:JSONDecode(response.Body)
+	end)
+	if not decodeOk or not data then
+		return nil
+	end
+	return {
+		studioCount = if data.studios then #data.studios else 0,
+		activeStudioId = data.activeStudioId,
+	}
+end
+
 -- ── Internal ─────────────────────────────────────────────────────
 
 function Connection._setStatus(self: Connection, status: ConnectionStatus)

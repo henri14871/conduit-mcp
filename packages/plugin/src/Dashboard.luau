@@ -34,6 +34,18 @@ export type Dashboard = typeof(setmetatable({} :: {
 	_onConnect: (() -> ())?,
 	_onDisconnect: (() -> ())?,
 	_onPortChange: ((port: number) -> ())?,
+	-- Stats
+	_commandCount: number,
+	_errorCount: number,
+	_statsLabel: TextLabel,
+	-- Uptime
+	_connectedAt: number?,
+	_uptimeThread: thread?,
+	_currentPort: number,
+	_currentPlaceName: string?,
+	-- Studios
+	_studioCount: number?,
+	_isActiveStudio: boolean?,
 }, Dashboard))
 
 function Dashboard.new(widget: DockWidgetPluginGui, pluginRef: Plugin): Dashboard
@@ -41,6 +53,9 @@ function Dashboard.new(widget: DockWidgetPluginGui, pluginRef: Plugin): Dashboar
 		_widget = widget,
 		_plugin = pluginRef,
 		_logEntries = {},
+		_commandCount = 0,
+		_errorCount = 0,
+		_currentPort = 3200,
 	} :: any, Dashboard)
 
 	self:_buildUI()
@@ -66,19 +81,54 @@ function Dashboard.updateStatus(self: Dashboard, status: string)
 end
 
 function Dashboard.updateStudioInfo(self: Dashboard, port: number, placeName: string?)
-	local parts = { "Port: " .. tostring(port) }
-	if placeName and placeName ~= "" then
-		parts[2] = "Studio: " .. placeName
-	end
-	self._infoLabel.Text = table.concat(parts, "  |  ")
+	self._currentPort = port
+	self._currentPlaceName = placeName
+	self:_refreshInfoLine()
 end
 
-function Dashboard.logActivity(self: Dashboard, method: string, status: string, duration: number?)
+function Dashboard.startUptime(self: Dashboard)
+	self._connectedAt = os.clock()
+	if self._uptimeThread then
+		task.cancel(self._uptimeThread)
+	end
+	self._uptimeThread = task.spawn(function()
+		while self._connectedAt do
+			self:_refreshInfoLine()
+			task.wait(1)
+		end
+	end)
+end
+
+function Dashboard.stopUptime(self: Dashboard)
+	self._connectedAt = nil
+	if self._uptimeThread then
+		task.cancel(self._uptimeThread)
+		self._uptimeThread = nil
+	end
+	self:_refreshInfoLine()
+end
+
+function Dashboard.updateStudiosInfo(self: Dashboard, studioCount: number, isActiveStudio: boolean)
+	self._studioCount = studioCount
+	self._isActiveStudio = isActiveStudio
+	self:_refreshInfoLine()
+end
+
+function Dashboard.logActivity(self: Dashboard, method: string, status: string, duration: number?, errorMessage: string?)
+	-- Count completed commands
+	if status == "success" or status == "error" then
+		self._commandCount += 1
+		if status == "error" then
+			self._errorCount += 1
+		end
+		self:_updateStats()
+	end
+
 	-- Skip "running" entries — we'll show them, but update on completion
 	if status == "running" then
-		self:_addLogEntry(method, status, nil)
+		self:_addLogEntry(method, status, nil, nil)
 	else
-		self:_updateOrAddLogEntry(method, status, duration)
+		self:_updateOrAddLogEntry(method, status, duration, errorMessage)
 	end
 end
 
@@ -132,10 +182,14 @@ function Dashboard._buildUI(self: Dashboard)
 	self:_buildStatusBar(container)
 	-- Separator
 	self:_buildSeparator(container, 3)
+	-- Stats bar
+	self:_buildStatsBar(container)
+	-- Separator
+	self:_buildSeparator(container, 5)
 	-- Activity log
 	self:_buildActivityLog(container)
 	-- Separator
-	self:_buildSeparator(container, 5)
+	self:_buildSeparator(container, 7)
 	-- Settings
 	self:_buildSettings(container)
 end
@@ -315,17 +369,49 @@ function Dashboard._buildStatusBar(self: Dashboard, parent: Frame)
 	self._infoLabel = info
 end
 
+function Dashboard._buildStatsBar(self: Dashboard, parent: Frame)
+	local bar = Instance.new("Frame")
+	bar.Name = "StatsBar"
+	bar.Size = UDim2.new(1, 0, 0, 18)
+	bar.BackgroundTransparency = 1
+	bar.LayoutOrder = 4
+	bar.Parent = parent
+
+	local statsLabel = Instance.new("TextLabel")
+	statsLabel.Name = "StatsLabel"
+	statsLabel.Size = UDim2.new(1, 0, 1, 0)
+	statsLabel.BackgroundTransparency = 1
+	statsLabel.Text = "Commands: 0  |  Errors: 0"
+	statsLabel.TextColor3 = COLORS.textMuted
+	statsLabel.TextSize = 11
+	statsLabel.Font = Enum.Font.Code
+	statsLabel.TextXAlignment = Enum.TextXAlignment.Left
+	statsLabel.Parent = bar
+
+	self._statsLabel = statsLabel
+end
+
+function Dashboard._updateStats(self: Dashboard)
+	local text = "Commands: " .. tostring(self._commandCount) .. "  |  Errors: " .. tostring(self._errorCount)
+	self._statsLabel.Text = text
+	if self._errorCount > 0 then
+		self._statsLabel.TextColor3 = COLORS.red
+	else
+		self._statsLabel.TextColor3 = COLORS.textMuted
+	end
+end
+
 function Dashboard._buildActivityLog(self: Dashboard, parent: Frame)
 	local section = Instance.new("Frame")
 	section.Name = "ActivitySection"
-	section.Size = UDim2.new(1, 0, 1, -213)
+	section.Size = UDim2.new(1, 0, 1, -243)
 	section.BackgroundTransparency = 1
-	section.LayoutOrder = 4
+	section.LayoutOrder = 6
 	section.Parent = parent
 
 	local sectionLabel = Instance.new("TextLabel")
 	sectionLabel.Name = "SectionLabel"
-	sectionLabel.Size = UDim2.new(1, 0, 0, 18)
+	sectionLabel.Size = UDim2.new(1, -36, 0, 18)
 	sectionLabel.BackgroundTransparency = 1
 	sectionLabel.Text = "Activity Log"
 	sectionLabel.TextColor3 = COLORS.textMuted
@@ -334,6 +420,22 @@ function Dashboard._buildActivityLog(self: Dashboard, parent: Frame)
 	sectionLabel.TextXAlignment = Enum.TextXAlignment.Left
 	sectionLabel.TextTransparency = 0.3
 	sectionLabel.Parent = section
+
+	local clearBtn = Instance.new("TextButton")
+	clearBtn.Name = "ClearBtn"
+	clearBtn.Size = UDim2.new(0, 32, 0, 18)
+	clearBtn.Position = UDim2.new(1, -32, 0, 0)
+	clearBtn.BackgroundTransparency = 1
+	clearBtn.Text = "Clear"
+	clearBtn.TextColor3 = COLORS.accent
+	clearBtn.TextSize = 10
+	clearBtn.Font = Enum.Font.GothamMedium
+	clearBtn.TextXAlignment = Enum.TextXAlignment.Right
+	clearBtn.Parent = section
+
+	clearBtn.MouseButton1Click:Connect(function()
+		self:_clearLog()
+	end)
 
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.Name = "LogScroll"
@@ -372,7 +474,7 @@ function Dashboard._buildSettings(self: Dashboard, parent: Frame)
 	section.Name = "SettingsSection"
 	section.Size = UDim2.new(1, 0, 0, 60)
 	section.BackgroundTransparency = 1
-	section.LayoutOrder = 6
+	section.LayoutOrder = 8
 	section.Parent = parent
 
 	local sectionLabel = Instance.new("TextLabel")
@@ -478,15 +580,66 @@ end
 
 -- ── Log Helpers ─────────────────────────────────────────────────
 
-function Dashboard._addLogEntry(self: Dashboard, method: string, status: string, duration: number?)
+function Dashboard._refreshInfoLine(self: Dashboard)
+	local parts = { "Port: " .. tostring(self._currentPort) }
+	if self._currentPlaceName and self._currentPlaceName ~= "" then
+		table.insert(parts, self._currentPlaceName)
+	end
+	if self._connectedAt then
+		local elapsed = os.clock() - self._connectedAt
+		table.insert(parts, "Up: " .. self:_formatDuration(elapsed))
+	end
+	if self._studioCount and self._studioCount > 0 then
+		local studioStr = "Studios: " .. tostring(self._studioCount)
+		if self._isActiveStudio then
+			studioStr ..= " (active)"
+		end
+		table.insert(parts, studioStr)
+	end
+	self._infoLabel.Text = table.concat(parts, "  |  ")
+end
+
+function Dashboard._formatDuration(_self: Dashboard, seconds: number): string
+	local h = math.floor(seconds / 3600)
+	local m = math.floor((seconds % 3600) / 60)
+	local s = math.floor(seconds % 60)
+	if h > 0 then
+		return string.format("%dh %dm %ds", h, m, s)
+	elseif m > 0 then
+		return string.format("%dm %ds", m, s)
+	else
+		return string.format("%ds", s)
+	end
+end
+
+function Dashboard._clearLog(self: Dashboard)
+	for _, entry in self._logEntries do
+		entry:Destroy()
+	end
+	self._logEntries = {}
+	self._commandCount = 0
+	self._errorCount = 0
+	self:_updateStats()
+end
+
+function Dashboard._addLogEntry(self: Dashboard, method: string, status: string, duration: number?, errorMessage: string?)
+	-- Capture scroll position before adding entry
+	local scroll = self._logScroll
+	local isAtBottom = (scroll.AbsoluteCanvasSize.Y - scroll.AbsoluteWindowSize.Y - scroll.CanvasPosition.Y) < 20
+
+	local entryHeight = 16
+	if status == "error" and errorMessage then
+		entryHeight = 30
+	end
+
 	local entry = Instance.new("Frame")
 	entry.Name = "Log_" .. method .. "_" .. tostring(#self._logEntries + 1)
-	entry.Size = UDim2.new(1, 0, 0, 16)
+	entry.Size = UDim2.new(1, 0, 0, entryHeight)
 	entry.BackgroundTransparency = 1
 	entry.LayoutOrder = #self._logEntries + 1
 	entry.Parent = self._logScroll
 
-	local timeStr = os.date("%H:%M:%S")
+	local timeStr = os.date("%H:%M:%S") :: string
 
 	local statusIcon = ""
 	local color = COLORS.textMuted
@@ -504,23 +657,41 @@ function Dashboard._addLogEntry(self: Dashboard, method: string, status: string,
 	local durationStr = ""
 	if duration then
 		if duration < 1 then
-			durationStr = string.format(" (%.0fms)", duration * 1000)
+			durationStr = string.format("%.0fms", duration * 1000)
 		else
-			durationStr = string.format(" (%.1fs)", duration)
+			durationStr = string.format("%.1fs", duration)
 		end
 	end
 
+	local methodDisplay = string.sub(method, 1, 22)
+	local line = string.format("%-8s %-22s %-4s %s", timeStr, methodDisplay, statusIcon, durationStr)
+
 	local label = Instance.new("TextLabel")
 	label.Name = "Text"
-	label.Size = UDim2.new(1, 0, 1, 0)
+	label.Size = UDim2.new(1, 0, 0, 16)
 	label.BackgroundTransparency = 1
-	label.Text = timeStr .. "  " .. method .. "  " .. statusIcon .. durationStr
+	label.Text = line
 	label.TextColor3 = color
 	label.TextSize = 11
 	label.Font = Enum.Font.Code
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.TextTruncate = Enum.TextTruncate.AtEnd
 	label.Parent = entry
+
+	if status == "error" and errorMessage then
+		local errLabel = Instance.new("TextLabel")
+		errLabel.Name = "ErrorDetail"
+		errLabel.Size = UDim2.new(1, 0, 0, 12)
+		errLabel.Position = UDim2.new(0, 0, 0, 16)
+		errLabel.BackgroundTransparency = 1
+		errLabel.Text = "  └ " .. errorMessage
+		errLabel.TextColor3 = COLORS.red
+		errLabel.TextSize = 10
+		errLabel.Font = Enum.Font.Code
+		errLabel.TextXAlignment = Enum.TextXAlignment.Left
+		errLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		errLabel.Parent = entry
+	end
 
 	table.insert(self._logEntries, entry)
 
@@ -537,20 +708,22 @@ function Dashboard._addLogEntry(self: Dashboard, method: string, status: string,
 		e.LayoutOrder = i
 	end
 
-	-- Auto-scroll to bottom
-	task.defer(function()
-		self._logScroll.CanvasPosition = Vector2.new(0, math.huge)
-	end)
+	-- Auto-scroll to bottom only if user was already at the bottom
+	if isAtBottom then
+		task.defer(function()
+			scroll.CanvasPosition = Vector2.new(0, math.huge)
+		end)
+	end
 end
 
-function Dashboard._updateOrAddLogEntry(self: Dashboard, method: string, status: string, duration: number?)
+function Dashboard._updateOrAddLogEntry(self: Dashboard, method: string, status: string, duration: number?, errorMessage: string?)
 	-- Try to find the last "running" entry for this method and update it
 	for i = #self._logEntries, 1, -1 do
 		local entry = self._logEntries[i]
 		local textLabel = entry:FindFirstChild("Text") :: TextLabel?
 		if textLabel and string.find(textLabel.Text, method, 1, true) and string.find(textLabel.Text, "%.%.%.") then
 			-- Update this entry
-			local timeStr = os.date("%H:%M:%S")
+			local timeStr = os.date("%H:%M:%S") :: string
 			local statusIcon = ""
 			local color = COLORS.textMuted
 			if status == "success" then
@@ -564,20 +737,41 @@ function Dashboard._updateOrAddLogEntry(self: Dashboard, method: string, status:
 			local durationStr = ""
 			if duration then
 				if duration < 1 then
-					durationStr = string.format(" (%.0fms)", duration * 1000)
+					durationStr = string.format("%.0fms", duration * 1000)
 				else
-					durationStr = string.format(" (%.1fs)", duration)
+					durationStr = string.format("%.1fs", duration)
 				end
 			end
 
-			textLabel.Text = timeStr .. "  " .. method .. "  " .. statusIcon .. durationStr
+			local methodDisplay = string.sub(method, 1, 22)
+			textLabel.Text = string.format("%-8s %-22s %-4s %s", timeStr, methodDisplay, statusIcon, durationStr)
 			textLabel.TextColor3 = color
+
+			-- Add error detail line if errored
+			if status == "error" and errorMessage then
+				entry.Size = UDim2.new(1, 0, 0, 30)
+				local existing = entry:FindFirstChild("ErrorDetail")
+				if not existing then
+					local errLabel = Instance.new("TextLabel")
+					errLabel.Name = "ErrorDetail"
+					errLabel.Size = UDim2.new(1, 0, 0, 12)
+					errLabel.Position = UDim2.new(0, 0, 0, 16)
+					errLabel.BackgroundTransparency = 1
+					errLabel.Text = "  └ " .. errorMessage
+					errLabel.TextColor3 = COLORS.red
+					errLabel.TextSize = 10
+					errLabel.Font = Enum.Font.Code
+					errLabel.TextXAlignment = Enum.TextXAlignment.Left
+					errLabel.TextTruncate = Enum.TextTruncate.AtEnd
+					errLabel.Parent = entry
+				end
+			end
 			return
 		end
 	end
 
 	-- No running entry found, add a new one
-	self:_addLogEntry(method, status, duration)
+	self:_addLogEntry(method, status, duration, errorMessage)
 end
 
 return Dashboard
