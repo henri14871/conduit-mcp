@@ -13,6 +13,11 @@ PLUGIN_DIR="$ROOT_DIR/packages/plugin"
 SERVER_DIR="$ROOT_DIR/packages/server"
 ROBLOX_PLUGINS="$LOCALAPPDATA/Roblox/Plugins"
 
+# Load .env if it exists (for NPM_TOKEN)
+if [ -f "$ROOT_DIR/.env" ]; then
+  export $(grep -v '^#' "$ROOT_DIR/.env" | xargs)
+fi
+
 usage() {
   echo -e "${CYAN}Conduit MCP Publisher${NC}"
   echo ""
@@ -97,7 +102,12 @@ publish_server() {
 
     # Publish
     echo -e "${CYAN}[server]${NC} Publishing to npm..."
-    npm publish
+    if [ -n "$NPM_TOKEN" ]; then
+      npm publish --//registry.npmjs.org/:_authToken="$NPM_TOKEN"
+    else
+      echo -e "${RED}[server]${NC} NPM_TOKEN not set. Add it to .env or export it."
+      exit 1
+    fi
     echo -e "${GREEN}[server]${NC} Published conduit-mcp@$NEW_VERSION!"
   fi
 }
