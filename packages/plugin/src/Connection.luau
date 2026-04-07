@@ -29,6 +29,8 @@ export type Connection = typeof(setmetatable({} :: {
 	_useHttpFallback: boolean,
 	_httpFallbackStartTime: number,
 	_lastHeartbeatAck: number,
+	_lastHeartbeatSendTime: number,
+	_lastPingMs: number?,
 	_healthVerifyThread: thread?,
 	_heartbeatThread: thread?,
 	_pollThread: thread?,
@@ -36,6 +38,8 @@ export type Connection = typeof(setmetatable({} :: {
 	_shouldRun: boolean,
 	_messageCallbacks: { (data: any) -> () },
 	_statusCallbacks: { (status: ConnectionStatus) -> () },
+	_pingCallbacks: { (ms: number) -> () },
+	_reconnectCountdownCallbacks: { (remaining: number, total: number) -> () },
 }, Connection))
 
 function Connection.new(port: number): Connection
@@ -50,6 +54,8 @@ function Connection.new(port: number): Connection
 		_useHttpFallback = false,
 		_httpFallbackStartTime = 0,
 		_lastHeartbeatAck = 0,
+		_lastHeartbeatSendTime = 0,
+		_lastPingMs = nil,
 		_healthVerifyThread = nil,
 		_heartbeatThread = nil,
 		_pollThread = nil,
@@ -57,6 +63,8 @@ function Connection.new(port: number): Connection
 		_shouldRun = false,
 		_messageCallbacks = {},
 		_statusCallbacks = {},
+		_pingCallbacks = {},
+		_reconnectCountdownCallbacks = {},
 	}, Connection)
 	return self
 end
@@ -67,6 +75,18 @@ end
 
 function Connection.onStatusChange(self: Connection, callback: (status: ConnectionStatus) -> ())
 	table.insert(self._statusCallbacks, callback)
+end
+
+function Connection.onPingUpdate(self: Connection, callback: (ms: number) -> ())
+	table.insert(self._pingCallbacks, callback)
+end
+
+function Connection.onReconnectCountdown(self: Connection, callback: (remaining: number, total: number) -> ())
+	table.insert(self._reconnectCountdownCallbacks, callback)
+end
+
+function Connection.getLastPing(self: Connection): number?
+	return self._lastPingMs
 end
 
 function Connection.isConnected(self: Connection): boolean
@@ -214,6 +234,18 @@ function Connection._fireMessage(self: Connection, data: any)
 	end
 end
 
+function Connection._firePingUpdate(self: Connection, ms: number)
+	for _, cb in self._pingCallbacks do
+		task.spawn(cb, ms)
+	end
+end
+
+function Connection._fireReconnectCountdown(self: Connection, remaining: number, total: number)
+	for _, cb in self._reconnectCountdownCallbacks do
+		task.spawn(cb, remaining, total)
+	end
+end
+
 --[[ Scan basePort .. basePort+PORT_SCAN_RANGE for a live Conduit /health endpoint.
      Returns the first port that responds, or nil if none found. ]]
 function Connection._discoverPort(self: Connection): number?
@@ -271,11 +303,16 @@ function Connection._connectLoop(self: Connection)
 			break
 		end
 
-		-- Wait before reconnecting (capped at MAX_RECONNECT_DELAY = 10s)
+		-- Wait before reconnecting with countdown
 		local delay = self._reconnectDelay
 		self._reconnectDelay = math.min(self._reconnectDelay * 2, MAX_RECONNECT_DELAY)
 		warn("[Conduit] Reconnecting in " .. delay .. "s...")
-		task.wait(delay)
+		for remaining = delay, 1, -1 do
+			self:_fireReconnectCountdown(remaining, delay)
+			task.wait(1)
+			if not self._shouldRun then break end
+		end
+		self:_fireReconnectCountdown(0, delay)
 	end
 
 	self._connectThread = nil
@@ -310,6 +347,11 @@ function Connection._connectWebSocket(self: Connection)
 		self._wsFailureCount = 0
 		self._reconnectDelay = 1
 		self._lastHeartbeatAck = os.clock()
+t			if self._lastHeartbeatSendTime > 0 then
+					local rtt = os.clock() - self._lastHeartbeatSendTime
+					self._lastPingMs = math.floor(rtt * 1000)
+					self:_firePingUpdate(self._lastPingMs)
+				end
 
 		-- Send studio registration before anything else
 		local regOk = pcall(function()
@@ -330,6 +372,7 @@ function Connection._connectWebSocket(self: Connection)
 		-- Start heartbeat with ack monitoring
 		self._heartbeatThread = task.spawn(function()
 			while self._shouldRun and self._status == "connected" do
+				self._lastHeartbeatSendTime = os.clock()
 				local hbOk = pcall(function()
 					ws:Send(HttpService:JSONEncode({ type = "heartbeat" }))
 				end)
@@ -413,6 +456,11 @@ function Connection._connectWebSocket(self: Connection)
 			-- Intercept heartbeat acknowledgments
 			if data.type == "heartbeat_ack" then
 				self._lastHeartbeatAck = os.clock()
+				if self._lastHeartbeatSendTime > 0 then
+					local rtt = os.clock() - self._lastHeartbeatSendTime
+					self._lastPingMs = math.floor(rtt * 1000)
+					self:_firePingUpdate(self._lastPingMs)
+				end
 				return
 			end
 			self:_fireMessage(data)

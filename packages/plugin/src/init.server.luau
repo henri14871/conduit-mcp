@@ -102,6 +102,7 @@ connection:onStatusChange(function(status)
 	elseif status == "disconnected" then
 		dashboard:stopUptime()
 		dashboard:updateStudiosInfo(0, false)
+		dashboard:updatePing(nil)
 
 		if healthPollThread then
 			task.cancel(healthPollThread)
@@ -109,6 +110,20 @@ connection:onStatusChange(function(status)
 		end
 
 		warn("[Conduit] Disconnected from MCP server")
+	end
+end)
+
+-- Wire ping display
+connection:onPingUpdate(function(ms)
+	dashboard:updatePing(ms)
+end)
+
+-- Wire reconnect countdown
+connection:onReconnectCountdown(function(remaining, _total)
+	if remaining > 0 then
+		dashboard:showReconnectCountdown(remaining)
+	else
+		dashboard:hideReconnectCountdown()
 	end
 end)
 
