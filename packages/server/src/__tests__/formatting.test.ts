@@ -42,7 +42,7 @@ describe("formatTree", () => {
     expect(result).toContain("  - **Model**");
   });
 
-  it("shows child count when depth is 0", () => {
+  it("renders children at depth 0", () => {
     const result = formatTree(
       {
         name: "Workspace",
@@ -54,7 +54,8 @@ describe("formatTree", () => {
       },
       0,
     );
-    expect(result).toContain("2 children");
+    expect(result).toContain("**A** `Part`");
+    expect(result).toContain("**B** `Part`");
   });
 });
 

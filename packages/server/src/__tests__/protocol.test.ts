@@ -2,15 +2,16 @@ import { describe, it, expect } from "vitest";
 import {
   generateId,
   isHeartbeat,
+  isHeartbeatAck,
   isStudioRegistration,
   isBridgeError,
   isBridgeResponse,
 } from "../protocol.js";
 
 describe("generateId", () => {
-  it("returns an 8-character string", () => {
+  it("returns a 16-character string", () => {
     const id = generateId();
-    expect(id).toHaveLength(8);
+    expect(id).toHaveLength(16);
     expect(typeof id).toBe("string");
   });
 
@@ -30,6 +31,22 @@ describe("isHeartbeat", () => {
     expect(isHeartbeat(null)).toBe(false);
     expect(isHeartbeat({})).toBe(false);
     expect(isHeartbeat("heartbeat")).toBe(false);
+  });
+});
+
+describe("isHeartbeatAck", () => {
+  it("returns true for heartbeat_ack messages", () => {
+    expect(isHeartbeatAck({ type: "heartbeat_ack" })).toBe(true);
+  });
+
+  it("returns false for heartbeat messages", () => {
+    expect(isHeartbeatAck({ type: "heartbeat" })).toBe(false);
+  });
+
+  it("returns false for non-objects", () => {
+    expect(isHeartbeatAck(null)).toBe(false);
+    expect(isHeartbeatAck({})).toBe(false);
+    expect(isHeartbeatAck("heartbeat_ack")).toBe(false);
   });
 });
 

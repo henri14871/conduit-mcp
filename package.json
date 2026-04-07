@@ -4,7 +4,12 @@
     "build": "pnpm -r build",
     "dev": "pnpm --filter server dev",
     "lint": "pnpm -r lint",
-    "test": "pnpm --filter server test"
+    "test": "pnpm --filter server test",
+    "publish:plugin": "bash scripts/publish.sh plugin",
+    "publish:server": "bash scripts/publish.sh server",
+    "publish:all": "bash scripts/publish.sh all",
+    "release:minor": "bash scripts/publish.sh all minor",
+    "release:major": "bash scripts/publish.sh all major"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]

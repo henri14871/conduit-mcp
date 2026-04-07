@@ -3,6 +3,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Bridge } from "../bridge.js";
 import { applyTokenBudget } from "../utils/formatting.js";
 
+// Track playtest session start time so get_output can filter stale logs
+let playtestStartedAt: number | null = null;
+
 export function register(server: McpServer, bridge: Bridge): void {
   server.registerTool(
     "playtest",
@@ -91,9 +94,11 @@ export function register(server: McpServer, bridge: Bridge): void {
     async (params) => {
       // ── get_output ──────────────────────────────────────────────
       if (params.action === "get_output") {
+        // Auto-filter to current playtest session if no explicit `since` provided
+        const since = params.since ?? playtestStartedAt ?? undefined;
         const result = (await bridge.send("get_log_output", {
           messageTypes: params.messageTypes,
-          since: params.since,
+          since,
           limit: params.limit,
         })) as {
           logs: Array<{ message: string; messageType: string; timestamp: number }>;
@@ -210,7 +215,7 @@ export function register(server: McpServer, bridge: Bridge): void {
         };
       }
 
-      // Original playtest actions
+      // Original playtest actions (start/stop/execute)
       const result = (await bridge.send("playtest", {
         action: params.action,
         code: params.code,
@@ -223,6 +228,13 @@ export function register(server: McpServer, bridge: Bridge): void {
         error?: string;
         output?: Array<{ message: string; messageType: string }>;
       };
+
+      // Track playtest session timing for log filtering
+      if (params.action === "start" && result.status === "started") {
+        playtestStartedAt = Date.now() / 1000; // LogService timestamps are in seconds
+      } else if (params.action === "stop" && result.status === "stopped") {
+        playtestStartedAt = null;
+      }
 
       let text: string;
       if (params.action === "execute") {

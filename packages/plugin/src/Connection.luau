@@ -7,7 +7,9 @@ local Types = require(script.Parent.Types)
 type ConnectionStatus = "disconnected" | "connecting" | "connected"
 
 local HEARTBEAT_INTERVAL = 5
-local MAX_RECONNECT_DELAY = 10
+local HEARTBEAT_ACK_TIMEOUT = 15 -- seconds without an ack before considering connection stale
+local HEALTH_VERIFY_INTERVAL = 30 -- seconds between HTTP health verification checks
+local MAX_RECONNECT_DELAY = 5
 local HTTP_POLL_INTERVAL = 0.5
 local WS_FAILURE_THRESHOLD = 3
 local PORT_SCAN_RANGE = 10 -- scan basePort .. basePort+10
@@ -26,6 +28,8 @@ export type Connection = typeof(setmetatable({} :: {
 	_wsFailureCount: number,
 	_useHttpFallback: boolean,
 	_httpFallbackStartTime: number,
+	_lastHeartbeatAck: number,
+	_healthVerifyThread: thread?,
 	_heartbeatThread: thread?,
 	_pollThread: thread?,
 	_connectThread: thread?,
@@ -45,6 +49,8 @@ function Connection.new(port: number): Connection
 		_wsFailureCount = 0,
 		_useHttpFallback = false,
 		_httpFallbackStartTime = 0,
+		_lastHeartbeatAck = 0,
+		_healthVerifyThread = nil,
 		_heartbeatThread = nil,
 		_pollThread = nil,
 		_connectThread = nil,
@@ -123,6 +129,11 @@ function Connection.disconnect(self: Connection)
 		self._heartbeatThread = nil
 	end
 
+	if self._healthVerifyThread then
+		task.cancel(self._healthVerifyThread)
+		self._healthVerifyThread = nil
+	end
+
 	if self._pollThread then
 		task.cancel(self._pollThread)
 		self._pollThread = nil
@@ -153,7 +164,7 @@ function Connection.send(self: Connection, message: string)
 	end
 end
 
-function Connection.pollHealth(self: Connection): { studioCount: number, activeStudioId: string? }?
+function Connection.pollHealth(self: Connection): { studioCount: number, activeStudioId: string?, isRegistered: boolean }?
 	local ok, response = pcall(function()
 		return HttpService:RequestAsync({
 			Url = "http://localhost:" .. self._port .. "/health",
@@ -169,9 +180,19 @@ function Connection.pollHealth(self: Connection): { studioCount: number, activeS
 	if not decodeOk or not data then
 		return nil
 	end
+	local isRegistered = false
+	if data.studios then
+		for _, studio in data.studios do
+			if studio.studioId == self._studioId then
+				isRegistered = true
+				break
+			end
+		end
+	end
 	return {
 		studioCount = if data.studios then #data.studios else 0,
 		activeStudioId = data.activeStudioId,
+		isRegistered = isRegistered,
 	}
 end
 
@@ -288,6 +309,7 @@ function Connection._connectWebSocket(self: Connection)
 		connected = true
 		self._wsFailureCount = 0
 		self._reconnectDelay = 1
+		self._lastHeartbeatAck = os.clock()
 
 		-- Send studio registration before anything else
 		local regOk = pcall(function()
@@ -305,7 +327,7 @@ function Connection._connectWebSocket(self: Connection)
 		self:_setStatus("connected")
 		print("[Conduit] Connected via WebSocket to port " .. self._port .. " (studio: " .. self._studioId .. ")")
 
-		-- Start heartbeat
+		-- Start heartbeat with ack monitoring
 		self._heartbeatThread = task.spawn(function()
 			while self._shouldRun and self._status == "connected" do
 				local hbOk = pcall(function()
@@ -323,7 +345,62 @@ function Connection._connectWebSocket(self: Connection)
 					end
 					break
 				end
+
+				-- Check if server is acknowledging our heartbeats
+				if self._lastHeartbeatAck > 0 and (os.clock() - self._lastHeartbeatAck) > HEARTBEAT_ACK_TIMEOUT then
+					warn("[Conduit] No heartbeat_ack from server for " .. HEARTBEAT_ACK_TIMEOUT .. "s — connection stale")
+					pcall(function()
+						ws:Close()
+					end)
+					self._ws = nil
+					closed = true
+					if self._shouldRun then
+						self:_setStatus("disconnected")
+					end
+					break
+				end
+
 				task.wait(HEARTBEAT_INTERVAL)
+			end
+		end)
+
+		-- Start periodic HTTP health verification
+		self._healthVerifyThread = task.spawn(function()
+			local consecutiveFailures = 0
+			while self._shouldRun and self._status == "connected" do
+				task.wait(HEALTH_VERIFY_INTERVAL)
+				if not self._shouldRun or self._status ~= "connected" then
+					break
+				end
+				local health = self:pollHealth()
+				if health == nil then
+					consecutiveFailures += 1
+					if consecutiveFailures >= 2 then
+						warn("[Conduit] Health check failed " .. consecutiveFailures .. " times — forcing reconnect")
+						pcall(function()
+							ws:Close()
+						end)
+						self._ws = nil
+						closed = true
+						if self._shouldRun then
+							self:_setStatus("disconnected")
+						end
+						break
+					end
+				elseif not health.isRegistered then
+					warn("[Conduit] Server no longer recognizes this studio — forcing reconnect")
+					pcall(function()
+						ws:Close()
+					end)
+					self._ws = nil
+					closed = true
+					if self._shouldRun then
+						self:_setStatus("disconnected")
+					end
+					break
+				else
+					consecutiveFailures = 0
+				end
 			end
 		end)
 	end)
@@ -333,6 +410,11 @@ function Connection._connectWebSocket(self: Connection)
 			return HttpService:JSONDecode(message)
 		end)
 		if decodeOk and data then
+			-- Intercept heartbeat acknowledgments
+			if data.type == "heartbeat_ack" then
+				self._lastHeartbeatAck = os.clock()
+				return
+			end
 			self:_fireMessage(data)
 		else
 			warn("[Conduit] Failed to decode message:", message)
@@ -345,6 +427,10 @@ function Connection._connectWebSocket(self: Connection)
 		if self._heartbeatThread then
 			task.cancel(self._heartbeatThread)
 			self._heartbeatThread = nil
+		end
+		if self._healthVerifyThread then
+			task.cancel(self._healthVerifyThread)
+			self._healthVerifyThread = nil
 		end
 		if self._shouldRun then
 			self:_setStatus("disconnected")

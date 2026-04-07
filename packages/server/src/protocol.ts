@@ -26,6 +26,11 @@ export interface Heartbeat {
   type: "heartbeat";
 }
 
+// ── Server → Plugin (heartbeat acknowledgment) ──────────────────
+export interface HeartbeatAck {
+  type: "heartbeat_ack";
+}
+
 // ── Plugin → Server (studio registration) ────────────────────────
 export interface StudioRegistration {
   type: "register";
@@ -66,6 +71,15 @@ export function isHeartbeat(msg: unknown): msg is Heartbeat {
     msg !== null &&
     "type" in msg &&
     (msg as Heartbeat).type === "heartbeat"
+  );
+}
+
+export function isHeartbeatAck(msg: unknown): msg is HeartbeatAck {
+  return (
+    typeof msg === "object" &&
+    msg !== null &&
+    "type" in msg &&
+    (msg as HeartbeatAck).type === "heartbeat_ack"
   );
 }
 

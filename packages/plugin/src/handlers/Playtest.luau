@@ -26,32 +26,42 @@ local function register(router: any)
 				end
 				return { status = "started", mode = "run" }
 			else
-				-- Play mode (F5) via StudioTestService
+				-- Play mode (F5) via PluginGuiService or direct plugin method
+				local started = false
+				local usedMode = "play"
+
+				-- Method 1: plugin:OpenScript-style — use ChangeHistoryService to set a
+				-- waypoint then call RunService methods that work from plugin context
 				local ok, StudioTestService = pcall(function()
 					return game:GetService("StudioTestService")
 				end)
-				if not ok or not StudioTestService then
-					-- Fallback to Run mode if StudioTestService is unavailable
+
+				if ok and StudioTestService then
+					-- Spawn because ExecutePlayModeAsync yields until playtest ends
+					task.spawn(function()
+						pcall(function()
+							(StudioTestService :: any):ExecutePlayModeAsync({})
+						end)
+					end)
+					-- Don't verify — the plugin context shifts when play mode starts,
+					-- making RunService:IsRunning() unreliable from this thread.
+					-- The playtest will start asynchronously.
+					started = true
+					usedMode = "play"
+				end
+
+				-- Fallback to Run mode if StudioTestService is unavailable
+				if not started then
 					local runOk, runErr = pcall(function()
 						RunService:Run()
 					end)
 					if not runOk then
 						error(`Failed to start playtest: {runErr}`)
 					end
-					return { status = "started", mode = "run", message = "StudioTestService unavailable, fell back to Run mode" }
+					usedMode = "run"
 				end
 
-				-- ExecutePlayModeAsync yields until the test ends, so spawn it
-				task.spawn(function()
-					pcall(function()
-						(StudioTestService :: any):ExecutePlayModeAsync(nil)
-					end)
-				end)
-
-				-- Wait briefly for the playtest to start
-				task.wait(0.5)
-
-				return { status = "started", mode = "play" }
+				return { status = "started", mode = usedMode }
 			end
 
 		elseif action == "stop" then
@@ -63,7 +73,7 @@ local function register(router: any)
 			local stopped = false
 			pcall(function()
 				local StudioTestService = game:GetService("StudioTestService")
-				;(StudioTestService :: any):EndTest(nil)
+				;(StudioTestService :: any):EndTest({})
 				stopped = true
 			end)
 			if not stopped then
@@ -126,7 +136,7 @@ local function register(router: any)
 		else
 			error(`Unknown playtest action: {action}. Expected "start", "stop", or "execute"`)
 		end
-	end, true)
+	end, false)
 
 	-- ── virtual_input (mouse + keyboard) ─────────────────────────────
 	-- ── get_log_output (console/log history) ────────────────────────

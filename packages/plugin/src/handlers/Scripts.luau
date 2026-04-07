@@ -170,6 +170,8 @@ local function register(router: any)
 			end
 
 			local replacements = 0
+			-- Escape % in replacement string for literal mode (gsub treats % as special in replacements)
+			local safeReplace = replaceWith:gsub("%%", "%%%%")
 
 			ScriptEditorService:UpdateSourceAsync(instance, function(oldSource: string)
 				local newSource: string
@@ -178,7 +180,7 @@ local function register(router: any)
 				else
 					-- Escape pattern special characters for literal matching
 					local escaped = findPattern:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
-					newSource = oldSource:gsub(escaped, replaceWith)
+					newSource = oldSource:gsub(escaped, safeReplace)
 				end
 
 				-- Count replacements by comparing
@@ -240,6 +242,8 @@ local function register(router: any)
 				end
 
 				local replacements = 0
+				-- Escape % in replacement string for literal mode (gsub treats % as special in replacements)
+				local safeReplace = replaceWith:gsub("%%", "%%%%")
 
 				ScriptEditorService:UpdateSourceAsync(instance, function(oldSource: string)
 					local newSource: string
@@ -247,7 +251,7 @@ local function register(router: any)
 						newSource = oldSource:gsub(findPattern, replaceWith)
 					else
 						local escaped = findPattern:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
-						newSource = oldSource:gsub(escaped, replaceWith)
+						newSource = oldSource:gsub(escaped, safeReplace)
 					end
 
 					if newSource ~= oldSource then

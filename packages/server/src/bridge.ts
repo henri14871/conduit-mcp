@@ -15,7 +15,8 @@ import { log } from "./utils/logger.js";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const HEARTBEAT_CHECK_INTERVAL_MS = 5_000;
-const HEARTBEAT_TIMEOUT_MS = 35_000;
+const HEARTBEAT_TIMEOUT_MS = 15_000;
+const PING_INTERVAL_MS = 10_000;
 const LONG_POLL_TIMEOUT_MS = 25_000;
 const MAX_PORT_RETRIES = 10;
 const REGISTRATION_TIMEOUT_MS = 10_000;
@@ -33,6 +34,7 @@ export class Bridge extends EventEmitter {
   private pendingRequests = new Map<string, PendingRequest>();
   private lastHeartbeats = new Map<string, number>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
   private actualPort = 0;
 
   // HTTP-only studios (no WebSocket connection)
@@ -180,11 +182,12 @@ export class Bridge extends EventEmitter {
     }
     this.pendingWs.clear();
 
-    // Stop heartbeat
+    // Stop heartbeat and ping
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    this.stopPingInterval();
 
     // Close HTTP long-poll waiters and reject their pending requests
     for (const [, waiters] of this.httpPollWaiters) {
@@ -373,6 +376,12 @@ export class Bridge extends EventEmitter {
     this.studios.set(studioId, { ws, info });
     this.lastHeartbeats.set(studioId, Date.now());
 
+    // Set up native WebSocket ping/pong for dead connection detection
+    (ws as any).isAlive = true;
+    ws.on("pong", () => {
+      (ws as any).isAlive = true;
+    });
+
     // Auto-activate the first studio
     if (this.activeStudioId === null) {
       this.activeStudioId = studioId;
@@ -385,6 +394,7 @@ export class Bridge extends EventEmitter {
     );
 
     this.startHeartbeatMonitor();
+    this.startPingInterval();
 
     // Remove early close/error listeners from handleWsConnection to avoid duplicates
     if ((ws as any).__earlyClose) {
@@ -401,6 +411,9 @@ export class Bridge extends EventEmitter {
         const msg = JSON.parse(data.toString());
         if (isHeartbeat(msg)) {
           this.lastHeartbeats.set(studioId, Date.now());
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "heartbeat_ack" }));
+          }
           return;
         }
         this.handlePluginMessage(msg);
@@ -431,6 +444,7 @@ export class Bridge extends EventEmitter {
 
         if (this.studios.size === 0) {
           this.stopHeartbeatMonitor();
+          this.stopPingInterval();
         }
       }
     });
@@ -498,6 +512,31 @@ export class Bridge extends EventEmitter {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+  }
+
+  private startPingInterval(): void {
+    if (this.pingTimer) return; // already running
+    this.pingTimer = setInterval(() => {
+      for (const [studioId, studio] of this.studios) {
+        const ws = studio.ws;
+        if ((ws as any).isAlive === false) {
+          log.warn(
+            `Ping timeout for studio "${studioId}" — terminating connection`,
+          );
+          ws.terminate();
+          return;
+        }
+        (ws as any).isAlive = false;
+        ws.ping();
+      }
+    }, PING_INTERVAL_MS);
+  }
+
+  private stopPingInterval(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
     }
   }
 
