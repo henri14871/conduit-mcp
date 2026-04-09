@@ -249,7 +249,22 @@ export class Bridge extends EventEmitter {
       this.pendingRequests.set(id, { resolve, reject, timer });
 
       if (studio) {
-        studio.ws.send(json);
+        studio.ws.send(json, (err) => {
+          if (err) {
+            clearTimeout(timer);
+            this.pendingRequests.delete(id);
+            log.warn(
+              `WebSocket send failed for studio "${this.activeStudioId}": ${err.message}`,
+            );
+            // Evict the broken connection so the next call doesn't repeat this
+            this.evictStaleStudio(this.activeStudioId!);
+            reject(
+              new Error(
+                `Failed to send to Roblox Studio: ${err.message}. The plugin connection may have dropped — it should auto-reconnect shortly. Please retry.`,
+              ),
+            );
+          }
+        });
       } else {
         // Queue for HTTP fallback using active studio ID
         const studioId = this.activeStudioId ?? "_default";
@@ -270,16 +285,59 @@ export class Bridge extends EventEmitter {
     return undefined;
   }
 
+  private isStudioAlive(studioId: string, studio: StudioConnection): boolean {
+    if (studio.ws.readyState !== WebSocket.OPEN) return false;
+    // Check heartbeat freshness — if we haven't heard from the studio
+    // in longer than the heartbeat timeout, consider it stale
+    const lastBeat = this.lastHeartbeats.get(studioId);
+    if (lastBeat !== undefined && Date.now() - lastBeat > HEARTBEAT_TIMEOUT_MS) {
+      log.warn(
+        `Studio "${studioId}" has stale heartbeat (${Math.round((Date.now() - lastBeat) / 1000)}s ago) — evicting`,
+      );
+      this.evictStaleStudio(studioId);
+      return false;
+    }
+    return true;
+  }
+
+  private evictStaleStudio(studioId: string): void {
+    const studio = this.studios.get(studioId);
+    if (studio) {
+      studio.ws.terminate();
+      this.studios.delete(studioId);
+      this.lastHeartbeats.delete(studioId);
+      this.emit("studio-disconnected", studio.info);
+      log.info(`Evicted stale studio: ${studioId}`);
+    }
+    if (this.activeStudioId === studioId) {
+      // Try to find another live studio
+      for (const [id, s] of this.studios) {
+        if (s.ws.readyState === WebSocket.OPEN) {
+          this.activeStudioId = id;
+          log.info(`Auto-switched active studio to: ${id}`);
+          return;
+        }
+      }
+      this.activeStudioId = null;
+    }
+    if (this.studios.size === 0) {
+      this.stopHeartbeatMonitor();
+      this.stopPingInterval();
+    }
+  }
+
   private resolveTargetStudio(): StudioConnection | undefined {
-    // If active studio is set and connected, use it
-    const active = this.getActiveStudio();
-    if (active && active.ws.readyState === WebSocket.OPEN) {
-      return active;
+    // If active studio is set and alive, use it
+    if (this.activeStudioId) {
+      const active = this.studios.get(this.activeStudioId);
+      if (active && this.isStudioAlive(this.activeStudioId, active)) {
+        return active;
+      }
     }
 
-    // Active studio is gone or stale — try to auto-select any open studio
+    // Active studio is gone or stale — try to auto-select any live studio
     for (const [studioId, studio] of this.studios) {
-      if (studio.ws.readyState === WebSocket.OPEN) {
+      if (this.isStudioAlive(studioId, studio)) {
         this.activeStudioId = studioId;
         log.info(`Auto-selected active studio: ${studioId}`);
         return studio;
@@ -382,8 +440,8 @@ export class Bridge extends EventEmitter {
       (ws as any).isAlive = true;
     });
 
-    // Auto-activate the first studio
-    if (this.activeStudioId === null) {
+    // Auto-activate: first studio, or reclaim if this studio was previously active
+    if (this.activeStudioId === null || this.activeStudioId === studioId) {
       this.activeStudioId = studioId;
     }
 

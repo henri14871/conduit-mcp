@@ -7,8 +7,8 @@ local Types = require(script.Parent.Types)
 type ConnectionStatus = "disconnected" | "connecting" | "connected"
 
 local HEARTBEAT_INTERVAL = 5
-local HEARTBEAT_ACK_TIMEOUT = 15 -- seconds without an ack before considering connection stale
-local HEALTH_VERIFY_INTERVAL = 30 -- seconds between HTTP health verification checks
+local HEARTBEAT_ACK_TIMEOUT = 10 -- seconds without an ack before considering connection stale
+local HEALTH_VERIFY_INTERVAL = 10 -- seconds between HTTP health verification checks
 local MAX_RECONNECT_DELAY = 5
 local HTTP_POLL_INTERVAL = 0.5
 local WS_FAILURE_THRESHOLD = 3
@@ -347,7 +347,7 @@ function Connection._connectWebSocket(self: Connection)
 		self._wsFailureCount = 0
 		self._reconnectDelay = 1
 		self._lastHeartbeatAck = os.clock()
-t			if self._lastHeartbeatSendTime > 0 then
+				if self._lastHeartbeatSendTime > 0 then
 					local rtt = os.clock() - self._lastHeartbeatSendTime
 					self._lastPingMs = math.floor(rtt * 1000)
 					self:_firePingUpdate(self._lastPingMs)
