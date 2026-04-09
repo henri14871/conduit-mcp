@@ -50,7 +50,9 @@ export function register(server: McpServer, bridge: Bridge): void {
     {
       title: "Take Screenshot",
       description:
-        "Capture a screenshot of the current Roblox Studio viewport. Returns base64 image data when available for vision model consumption.",
+        "Capture a screenshot of the current Roblox Studio viewport. Works in both edit mode and during playtest.\n\n" +
+        "The screenshot is saved to the user's Roblox screenshots folder. Base64 image data is returned when the EditableImage API is available (Roblox platform limitation).\n\n" +
+        "Tip: During playtest, use this to capture the game viewport. Combine with `playtest start` + a short delay via `playtest execute` (e.g. `task.wait(2)`) to capture after the game loads.",
       inputSchema: z.object({}),
       annotations: {
         readOnlyHint: true,
@@ -125,13 +127,13 @@ export function register(server: McpServer, bridge: Bridge): void {
     {
       title: "Transaction Control",
       description:
-        "Group multiple mutating tool calls into a single Ctrl+Z undo point.\n\n" +
-        "Usage: ALWAYS call `begin` first, then make your changes, then call `commit` or `rollback`. " +
-        "Calling `commit` or `rollback` without a prior `begin` will error.\n\n" +
+        "Group multiple tool calls into a single Ctrl+Z undo point — essential when making several related edits that the user should be able to revert together.\n\n" +
+        "**When to use:** Before starting a multi-edit session (e.g. refactoring across scripts, creating multiple instances, UI changes). " +
+        "Call `begin`, make all your changes, then `commit`. The user can undo everything in one Ctrl+Z.\n\n" +
         "Actions:\n" +
         "- `begin`: Start a transaction. All subsequent writes share one undo recording.\n" +
-        "- `commit`: Finish an open transaction and commit all changes as one undo point. Requires a prior `begin`.\n" +
-        "- `rollback`: Cancel an open transaction and undo all changes made since begin. Requires a prior `begin`.\n\n" +
+        "- `commit`: Finish and commit all changes as one undo point.\n" +
+        "- `rollback`: Cancel and revert all changes since begin.\n\n" +
         "Transactions auto-rollback after 60 seconds if not committed.",
       inputSchema: z.object({
         action: z

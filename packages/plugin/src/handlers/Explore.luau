@@ -213,7 +213,11 @@ local function register(router: any)
 
 		if params.includeProperties then
 			local props: { [string]: any } = {}
-			for _, propName in COMMON_PROPERTIES do
+			-- If specific property names are requested, read only those
+			local propsToRead: { string } = if params.propertyNames and #params.propertyNames > 0
+				then params.propertyNames
+				else COMMON_PROPERTIES
+			for _, propName in propsToRead do
 				if propName == "Name" or propName == "ClassName" or propName == "Parent" then
 					continue
 				end

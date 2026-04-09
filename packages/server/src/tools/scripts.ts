@@ -18,16 +18,22 @@ function registerReadScript(server: McpServer, bridge: Bridge): void {
     {
       title: "Read Script Source",
       description:
-        "Read the Lua source code of a script instance. Optionally restrict to a line range.",
+        "Read the Lua source code of a script instance. Optionally restrict to a line range. Use outline=true to get just function signatures and top-level declarations with line numbers — much cheaper than reading the full source for large scripts.",
       inputSchema: z.object({
         path: z.string().describe("Path to the script instance"),
+        outline: z
+          .boolean()
+          .default(false)
+          .describe(
+            "If true, return only a structural outline (function signatures, top-level locals, types, return) with line numbers instead of full source. Ideal for navigating large scripts.",
+          ),
         lineRange: z
           .object({
             start: z.number().int().min(1).describe("Start line (1-based)"),
             end: z.number().int().min(1).describe("End line (1-based, inclusive)"),
           })
           .optional()
-          .describe("Optional line range to read"),
+          .describe("Optional line range to read (ignored when outline=true)"),
         maxTokens: z
           .number()
           .optional()
@@ -41,6 +47,44 @@ function registerReadScript(server: McpServer, bridge: Bridge): void {
       },
     },
     async (params) => {
+      // ── outline mode ──────────────────────────────────────────
+      if (params.outline) {
+        const result = (await bridge.send("outline_script", {
+          path: params.path,
+        })) as {
+          path: string;
+          totalLines: number;
+          outline: Array<{
+            line: number;
+            text: string;
+            kind: string;
+            indent: number;
+          }>;
+        };
+
+        const lines: string[] = [
+          `### Outline: \`${result.path}\` (${result.totalLines} lines)`,
+          "",
+        ];
+
+        for (const entry of result.outline) {
+          const pad = " ".repeat(entry.indent);
+          lines.push(`${entry.line}: ${pad}${entry.text}`);
+        }
+
+        if (result.outline.length === 0) {
+          lines.push("*No functions, type definitions, or top-level declarations found.*");
+        }
+
+        const text = lines.join("\n");
+        return {
+          content: [
+            { type: "text", text: applyTokenBudget(text, params.maxTokens) },
+          ],
+        };
+      }
+
+      // ── full read mode ────────────────────────────────────────
       if (params.lineRange && params.lineRange.end < params.lineRange.start) {
         return {
           content: [{ type: "text", text: "lineRange.end must be >= lineRange.start." }],
@@ -67,12 +111,18 @@ function registerWriteTools(server: McpServer, bridge: Bridge): void {
     {
       title: "Edit Script Source",
       description:
-        "Edit the Lua source code of a script. Supports four modes: 'full' replaces the entire source, 'range' replaces specific line/column ranges, 'find_replace' does text find-and-replace on one script, and 'multi_replace' does find-and-replace across multiple scripts in one undoable operation.",
+        "Edit the Lua source code of a script. Supports five modes:\n" +
+        "- 'full': Replace entire source.\n" +
+        "- 'range': Replace specific line/column ranges.\n" +
+        "- 'find_replace': Text find-and-replace on one script.\n" +
+        "- 'multi_replace': Same find-and-replace across multiple scripts.\n" +
+        "- 'batch': Different find-and-replace edits across different scripts in one atomic operation. Use this when you need different changes in different scripts.\n\n" +
+        "Tip: Wrap multiple edits in a transaction (begin/commit) to group them into a single Ctrl+Z undo point.",
       inputSchema: z.object({
-        path: z.string().describe("Path to the script instance"),
+        path: z.string().optional().describe("Path to the script instance (not needed for 'multi_replace' or 'batch' modes)"),
         mode: z
-          .enum(["full", "range", "find_replace", "multi_replace"])
-          .describe("Edit mode: full, range, find_replace, or multi_replace"),
+          .enum(["full", "range", "find_replace", "multi_replace", "batch"])
+          .describe("Edit mode"),
         source: z
           .string()
           .optional()
@@ -105,6 +155,19 @@ function registerWriteTools(server: McpServer, bridge: Bridge): void {
           .array(z.string())
           .optional()
           .describe("Array of script paths to apply find/replace across (for 'multi_replace' mode)"),
+        batch: z
+          .array(
+            z.object({
+              path: z.string().describe("Script path"),
+              find: z.string().describe("Text or pattern to find"),
+              replace: z.string().default("").describe("Replacement text"),
+              regex: z.boolean().default(false).describe("Treat find as a Lua pattern"),
+            }),
+          )
+          .optional()
+          .describe(
+            "Array of per-script find/replace operations (for 'batch' mode). Each entry targets a different script with its own find/replace pair.",
+          ),
       }),
       annotations: {
         readOnlyHint: false,
@@ -174,6 +237,44 @@ function registerWriteTools(server: McpServer, bridge: Bridge): void {
 
         for (const r of result.results) {
           lines.push(`- \`${r.path}\`: ${r.replacements} replacement(s)`);
+        }
+
+        if (result.errors && result.errors.length > 0) {
+          lines.push("", "**Errors:**");
+          for (const e of result.errors) {
+            lines.push(`- \`${e.path}\`: ${e.error}`);
+          }
+        }
+
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      // ── batch mode (different edits per script) ──────────────
+      if (params.mode === "batch") {
+        if (!params.batch || params.batch.length === 0) {
+          return {
+            content: [{ type: "text", text: "batch mode requires a non-empty `batch` array." }],
+            isError: true,
+          };
+        }
+
+        const result = (await bridge.send("batch_edit_scripts", {
+          edits: params.batch,
+        })) as {
+          results: Array<{ path: string; success: boolean; replacements?: number }>;
+          scriptsModified: number;
+          errors?: Array<{ path: string; error: string }>;
+        };
+
+        const lines: string[] = [
+          `**Batch edit** — ${result.scriptsModified} script(s) modified`,
+          "",
+        ];
+
+        for (const r of result.results) {
+          if (r.success) {
+            lines.push(`- \`${r.path}\`: ${r.replacements ?? 0} replacement(s)`);
+          }
         }
 
         if (result.errors && result.errors.length > 0) {

@@ -320,10 +320,18 @@ local function register(router: any)
 		local totalMatches = 0
 		local scriptsSearched = 0
 
+		-- Build search list: include root itself if it's a script (not just descendants)
+		local searchList: { Instance } = {}
+		if root:IsA("LuaSourceContainer") then
+			table.insert(searchList, root)
+		end
 		for _, descendant in root:GetDescendants() do
-			if not descendant:IsA("LuaSourceContainer") then
-				continue
+			if descendant:IsA("LuaSourceContainer") then
+				table.insert(searchList, descendant)
 			end
+		end
+
+		for _, descendant in searchList do
 
 			local ok, source = pcall(function()
 				return ScriptEditorService:GetEditorSource(descendant)

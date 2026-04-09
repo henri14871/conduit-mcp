@@ -169,7 +169,10 @@ export function register(server: McpServer, bridge: Bridge): void {
     {
       title: "Get Instance Info",
       description:
-        "Get detailed information about a single instance: class, parent, children count, properties, attributes, tags, and optionally a typed property list — all in one call.",
+        "Get detailed information about a single instance: class, parent, children count, properties, attributes, tags, and optionally a typed property list — all in one call.\n\n" +
+        "Use this to inspect runtime UI layout (Size, Position, Transparency, Visible, Text, etc.), part properties, lighting, sounds, and more. " +
+        "Reads ~60 common properties automatically. Use `propertyNames` to request only specific properties for a leaner response.\n\n" +
+        "For UI debugging: check BackgroundTransparency, Visible, Size, Position, AnchorPoint, ZIndex, LayoutOrder on GuiObjects.",
       inputSchema: z.object({
         path: z
           .string()
@@ -177,7 +180,14 @@ export function register(server: McpServer, bridge: Bridge): void {
         includeProperties: z
           .boolean()
           .default(true)
-          .describe("Include property values"),
+          .describe("Include property values (reads ~60 common properties)"),
+        propertyNames: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Request only these specific properties by name, e.g. ['Size', 'Position', 'Transparency']. " +
+            "When set, only these properties are returned (much leaner than the full property dump).",
+          ),
         includeAttributes: z
           .boolean()
           .default(true)
@@ -210,6 +220,7 @@ export function register(server: McpServer, bridge: Bridge): void {
       const result = (await bridge.send("get_info", {
         path: params.path,
         includeProperties: params.includeProperties,
+        propertyNames: params.propertyNames,
         includeAttributes: params.includeAttributes,
         includeTags: params.includeTags,
         includePropertyList: params.includePropertyList,

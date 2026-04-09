@@ -24,10 +24,11 @@ export function register(server: McpServer, bridge: Bridge): void {
         "- `mouse_move`: Move the virtual mouse to screen coordinates.\n" +
         "- `key_press`: Press and release a key.\n" +
         "- `key_down`: Hold a key down.\n" +
-        "- `key_up`: Release a held key.",
+        "- `key_up`: Release a held key.\n" +
+        "- `screenshot`: Capture the viewport during playtest. Useful for seeing the game state visually.",
       inputSchema: z.object({
         action: z
-          .enum(["start", "stop", "execute", "get_output", "inspect", "navigate", "mouse_click", "mouse_move", "key_press", "key_down", "key_up"])
+          .enum(["start", "stop", "execute", "get_output", "inspect", "navigate", "mouse_click", "mouse_move", "key_press", "key_down", "key_up", "screenshot"])
           .describe("Playtest action"),
         mode: z
           .enum(["play", "run"])
@@ -164,6 +165,34 @@ export function register(server: McpServer, bridge: Bridge): void {
           : "unknown";
         const text = `**Navigation:** ${result.status}\n**Final position:** ${posStr}${result.message ? `\n${result.message}` : ""}`;
         return { content: [{ type: "text", text }] };
+      }
+
+      // ── screenshot ─────────────────────────────────────────────
+      if (params.action === "screenshot") {
+        const result = (await bridge.send("screenshot", {})) as {
+          status: string;
+          imageBase64?: string;
+          mimeType?: string;
+          message?: string;
+        };
+
+        if (result.imageBase64 && result.mimeType) {
+          return {
+            content: [
+              {
+                type: "image" as const,
+                data: result.imageBase64,
+                mimeType: result.mimeType,
+              },
+            ],
+          };
+        }
+
+        return {
+          content: [
+            { type: "text", text: `Playtest screenshot: ${result.message ?? result.status}` },
+          ],
+        };
       }
 
       // ── virtual input ───────────────────────────────────────────

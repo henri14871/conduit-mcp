@@ -55,6 +55,94 @@ local function register(router: any)
 		}
 	end, false)
 
+	-- ── outline_script (function signatures + structure) ────────────
+	router:register("outline_script", function(params: { [string]: any })
+		local path: string = params.path
+		if not path then
+			error("outline_script requires a path")
+		end
+
+		local instance = Serializer.resolvePath(path)
+		if not instance then
+			error(`Could not resolve path: {path}`)
+		end
+
+		if not instance:IsA("LuaSourceContainer") then
+			error(`Instance at {path} is not a script (got {instance.ClassName})`)
+		end
+
+		local source = ScriptEditorService:GetEditorSource(instance)
+		local lines = source:split("\n")
+		local entries: { { line: number, text: string, kind: string, indent: number } } = {}
+
+		for lineNum, lineText in lines do
+			local stripped = lineText:match("^%s*(.-)%s*$") or ""
+			local indentStr = lineText:match("^(%s*)") or ""
+			local indent = #indentStr
+
+			-- function Name(...) or function Module.Name(...) or function Module:Name(...)
+			if stripped:match("^function%s+[%w_%.%:]+%s*%(") then
+				local sig = stripped:match("^(function%s+[%w_%.%:]+%s*%([^%)]*%))")
+				table.insert(entries, {
+					line = lineNum,
+					text = sig or stripped,
+					kind = "function",
+					indent = indent,
+				})
+			-- local function Name(...)
+			elseif stripped:match("^local%s+function%s+[%w_]+%s*%(") then
+				local sig = stripped:match("^(local%s+function%s+[%w_]+%s*%([^%)]*%))")
+				table.insert(entries, {
+					line = lineNum,
+					text = sig or stripped,
+					kind = "local_function",
+					indent = indent,
+				})
+			-- Module.Name = function(...) or self.Name = function(...)
+			elseif stripped:match("^[%w_%.%:]+%s*=%s*function%s*%(") then
+				local sig = stripped:match("^([%w_%.%:]+%s*=%s*function%s*%([^%)]*%))")
+				table.insert(entries, {
+					line = lineNum,
+					text = sig or stripped,
+					kind = "assigned_function",
+					indent = indent,
+				})
+			-- Top-level local declarations (indent 0 only, skip function-level locals)
+			elseif indent == 0 and stripped:match("^local%s+[%w_]+") and not stripped:match("^local%s+function") then
+				local decl = stripped:match("^(local%s+[%w_]+)")
+				table.insert(entries, {
+					line = lineNum,
+					text = decl or stripped,
+					kind = "local",
+					indent = indent,
+				})
+			-- return statement at indent 0 (module return)
+			elseif indent == 0 and stripped:match("^return%s") then
+				table.insert(entries, {
+					line = lineNum,
+					text = stripped,
+					kind = "return",
+					indent = indent,
+				})
+			-- Type definitions
+			elseif stripped:match("^export%s+type%s+") or stripped:match("^type%s+[%w_]+") then
+				local decl = stripped:match("^(export%s+type%s+[%w_]+)") or stripped:match("^(type%s+[%w_]+)")
+				table.insert(entries, {
+					line = lineNum,
+					text = decl or stripped,
+					kind = "type",
+					indent = indent,
+				})
+			end
+		end
+
+		return {
+			path = path,
+			totalLines = #lines,
+			outline = entries,
+		}
+	end, false)
+
 	router:register("edit_script", function(params: { [string]: any })
 		local path: string = params.path
 		local mode: string = params.mode
@@ -280,6 +368,81 @@ local function register(router: any)
 		return {
 			results = results,
 			totalReplacements = totalReplacements,
+			scriptsModified = scriptsModified,
+			errors = if #errors > 0 then errors else nil,
+		}
+	end, true)
+
+	-- ── batch_edit_scripts (different edits per script) ─────────────
+	router:register("batch_edit_scripts", function(params: { [string]: any })
+		local edits = params.edits
+		if not edits or #edits == 0 then
+			error("batch_edit_scripts requires a non-empty edits array")
+		end
+
+		local results: { { path: string, success: boolean, replacements: number? } } = {}
+		local errors: { { path: string, error: string } } = {}
+		local scriptsModified = 0
+
+		for _, edit in edits do
+			local path: string = edit.path
+			local findPattern: string = edit.find
+			local replaceWith: string = edit.replace or ""
+			local useRegex: boolean = if edit.regex then true else false
+
+			local ok, err = pcall(function()
+				if not path then
+					error("Each edit requires a path")
+				end
+				if not findPattern then
+					error("Each edit requires a find parameter")
+				end
+
+				local instance = Serializer.resolvePath(path)
+				if not instance then
+					error(`Could not resolve path: {path}`)
+				end
+				if not instance:IsA("LuaSourceContainer") then
+					error(`Instance at {path} is not a script (got {instance.ClassName})`)
+				end
+
+				local replacements = 0
+				local safeReplace = replaceWith:gsub("%%", "%%%%")
+
+				ScriptEditorService:UpdateSourceAsync(instance, function(oldSource: string)
+					local newSource: string
+					if useRegex then
+						newSource = oldSource:gsub(findPattern, replaceWith)
+					else
+						local escaped = findPattern:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+						newSource = oldSource:gsub(escaped, safeReplace)
+					end
+
+					if newSource ~= oldSource then
+						local _, count = oldSource:gsub(
+							if useRegex then findPattern else findPattern:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"),
+							""
+						)
+						replacements = count
+					end
+
+					return newSource
+				end)
+
+				table.insert(results, { path = path, success = true, replacements = replacements })
+				if replacements > 0 then
+					scriptsModified += 1
+				end
+			end)
+
+			if not ok then
+				table.insert(results, { path = path, success = false })
+				table.insert(errors, { path = path, error = tostring(err) })
+			end
+		end
+
+		return {
+			results = results,
 			scriptsModified = scriptsModified,
 			errors = if #errors > 0 then errors else nil,
 		}
