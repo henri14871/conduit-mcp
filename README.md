@@ -1,10 +1,14 @@
-# Conduit MCP
+<p align="center">
+  <img src="branding/banner.svg" alt="Conduit MCP" width="680" />
+</p>
 
-[![npm version](https://img.shields.io/npm/v/conduit-mcp)](https://www.npmjs.com/package/conduit-mcp)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/henri14871/conduit-mcp)](https://github.com/henri14871/conduit-mcp)
+<p align="center">
+  <a href="https://www.npmjs.com/package/conduit-mcp"><img src="https://img.shields.io/npm/v/conduit-mcp" alt="npm version" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="https://github.com/henri14871/conduit-mcp"><img src="https://img.shields.io/github/stars/henri14871/conduit-mcp" alt="GitHub stars" /></a>
+</p>
 
-**The first Roblox Studio MCP built on WebSocket not polling.**
+<p align="center"><strong>The first Roblox Studio MCP built on WebSocket not polling.</strong></p>
 
 ```
 AI Client <--stdio--> Conduit Server <--WebSocket--> Studio Plugin <--API--> DataModel
