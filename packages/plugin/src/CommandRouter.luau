@@ -55,15 +55,16 @@ function CommandRouter.new(connection: Connection): CommandRouter
 		end
 
 		local name: string = params.name or "Transaction"
+		local timeout: number = math.clamp(params.timeout or 120, 10, 300)
 		local recording = UndoManager.beginTransaction(name)
 		local transactionId = name .. "_" .. tostring(tick())
 
 		self._activeTransaction = { id = transactionId, recording = recording }
 
-		-- Auto-rollback after 60 seconds to prevent dangling recordings
-		self._transactionTimeout = task.delay(60, function()
+		-- Auto-rollback after timeout to prevent dangling recordings
+		self._transactionTimeout = task.delay(timeout, function()
 			if self._activeTransaction and self._activeTransaction.id == transactionId then
-				warn("[Conduit] Transaction timed out after 60s, auto-rolling back: " .. name)
+				warn(`[Conduit] Transaction timed out after {timeout}s, auto-rolling back: ` .. name)
 				pcall(function()
 					UndoManager.rollbackTransaction(self._activeTransaction.recording)
 				end)

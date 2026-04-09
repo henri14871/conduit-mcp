@@ -15,6 +15,11 @@ export function formatTree(
   depth: number = 0,
   indent: string = "",
 ): string {
+  // Render collapsed summary nodes as italic
+  if (data.className === "_collapsed") {
+    return `${indent}  *${data.name}*\n`;
+  }
+
   let line = `${indent}- **${data.name}** \`${data.className}\``;
 
   if (data.properties && Object.keys(data.properties).length > 0) {

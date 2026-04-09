@@ -143,6 +143,95 @@ local function register(router: any)
 		}
 	end, false)
 
+	-- ── batch_read_scripts (multiple scripts in one call) ────────
+	router:register("batch_read_scripts", function(params: { [string]: any })
+		local scripts = params.scripts
+		if not scripts or #scripts == 0 then
+			error("batch_read_scripts requires a non-empty scripts array")
+		end
+
+		local results: { { [string]: any } } = {}
+		local errors: { { path: string, error: string } } = {}
+
+		for _, entry in scripts do
+			local path: string = entry.path
+			local ok, res = pcall(function()
+				if not path then
+					error("Each entry requires a path")
+				end
+
+				local instance = Serializer.resolvePath(path)
+				if not instance then
+					error(`Could not resolve path: {path}`)
+				end
+				if not instance:IsA("LuaSourceContainer") then
+					error(`Instance at {path} is not a script (got {instance.ClassName})`)
+				end
+
+				local source = ScriptEditorService:GetEditorSource(instance)
+				local lines = source:split("\n")
+
+				-- Outline mode
+				if entry.outline then
+					local entries: { { line: number, text: string, kind: string, indent: number } } = {}
+					for lineNum, lineText in lines do
+						local stripped = lineText:match("^%s*(.-)%s*$") or ""
+						local indentStr = lineText:match("^(%s*)") or ""
+						local indent = #indentStr
+
+						if stripped:match("^function%s+[%w_%.%:]+%s*%(") then
+							local sig = stripped:match("^(function%s+[%w_%.%:]+%s*%([^%)]*%))")
+							table.insert(entries, { line = lineNum, text = sig or stripped, kind = "function", indent = indent })
+						elseif stripped:match("^local%s+function%s+[%w_]+%s*%(") then
+							local sig = stripped:match("^(local%s+function%s+[%w_]+%s*%([^%)]*%))")
+							table.insert(entries, { line = lineNum, text = sig or stripped, kind = "local_function", indent = indent })
+						elseif stripped:match("^[%w_%.%:]+%s*=%s*function%s*%(") then
+							local sig = stripped:match("^([%w_%.%:]+%s*=%s*function%s*%([^%)]*%))")
+							table.insert(entries, { line = lineNum, text = sig or stripped, kind = "assigned_function", indent = indent })
+						elseif indent == 0 and stripped:match("^local%s+[%w_]+") and not stripped:match("^local%s+function") then
+							local decl = stripped:match("^(local%s+[%w_]+)")
+							table.insert(entries, { line = lineNum, text = decl or stripped, kind = "local", indent = indent })
+						elseif indent == 0 and stripped:match("^return%s") then
+							table.insert(entries, { line = lineNum, text = stripped, kind = "return", indent = indent })
+						elseif stripped:match("^export%s+type%s+") or stripped:match("^type%s+[%w_]+") then
+							local decl = stripped:match("^(export%s+type%s+[%w_]+)") or stripped:match("^(type%s+[%w_]+)")
+							table.insert(entries, { line = lineNum, text = decl or stripped, kind = "type", indent = indent })
+						end
+					end
+					return { path = path, totalLines = #lines, outline = entries }
+				end
+
+				-- Line range mode
+				local lineRange = entry.lineRange
+				if lineRange then
+					local startLine: number = lineRange.start or 1
+					local endLine: number = lineRange["end"] or #lines
+					endLine = math.min(endLine, #lines)
+					return {
+						path = path,
+						source = extractLineRange(source, startLine, endLine),
+						lineRange = { start = startLine, ["end"] = endLine },
+						totalLines = #lines,
+					}
+				end
+
+				-- Full source
+				return { path = path, source = source, totalLines = #lines }
+			end)
+
+			if ok then
+				table.insert(results, res)
+			else
+				table.insert(errors, { path = path or "unknown", error = tostring(res) })
+			end
+		end
+
+		return {
+			results = results,
+			errors = if #errors > 0 then errors else nil,
+		}
+	end, false)
+
 	router:register("edit_script", function(params: { [string]: any })
 		local path: string = params.path
 		local mode: string = params.mode
@@ -374,28 +463,25 @@ local function register(router: any)
 	end, true)
 
 	-- ── batch_edit_scripts (different edits per script) ─────────────
+	-- Each edit can be either:
+	--   { path, source }           → full source replacement
+	--   { path, find, replace }    → find/replace
 	router:register("batch_edit_scripts", function(params: { [string]: any })
 		local edits = params.edits
 		if not edits or #edits == 0 then
 			error("batch_edit_scripts requires a non-empty edits array")
 		end
 
-		local results: { { path: string, success: boolean, replacements: number? } } = {}
+		local results: { { path: string, success: boolean, mode: string, replacements: number? } } = {}
 		local errors: { { path: string, error: string } } = {}
 		local scriptsModified = 0
 
 		for _, edit in edits do
 			local path: string = edit.path
-			local findPattern: string = edit.find
-			local replaceWith: string = edit.replace or ""
-			local useRegex: boolean = if edit.regex then true else false
 
 			local ok, err = pcall(function()
 				if not path then
 					error("Each edit requires a path")
-				end
-				if not findPattern then
-					error("Each edit requires a find parameter")
 				end
 
 				local instance = Serializer.resolvePath(path)
@@ -406,6 +492,29 @@ local function register(router: any)
 					error(`Instance at {path} is not a script (got {instance.ClassName})`)
 				end
 
+				-- Full source replacement mode
+				if edit.source ~= nil then
+					local newSource: string = edit.source
+					ScriptEditorService:UpdateSourceAsync(instance, function(_oldSource: string)
+						return newSource
+					end)
+					table.insert(results, {
+						path = path,
+						success = true,
+						mode = "full",
+					})
+					scriptsModified += 1
+					return
+				end
+
+				-- Find/replace mode
+				local findPattern: string = edit.find
+				if not findPattern then
+					error("Each edit requires either a 'source' or 'find' parameter")
+				end
+
+				local replaceWith: string = edit.replace or ""
+				local useRegex: boolean = if edit.regex then true else false
 				local replacements = 0
 				local safeReplace = replaceWith:gsub("%%", "%%%%")
 
@@ -429,14 +538,14 @@ local function register(router: any)
 					return newSource
 				end)
 
-				table.insert(results, { path = path, success = true, replacements = replacements })
+				table.insert(results, { path = path, success = true, mode = "find_replace", replacements = replacements })
 				if replacements > 0 then
 					scriptsModified += 1
 				end
 			end)
 
 			if not ok then
-				table.insert(results, { path = path, success = false })
+				table.insert(results, { path = path, success = false, mode = "error" })
 				table.insert(errors, { path = path, error = tostring(err) })
 			end
 		end

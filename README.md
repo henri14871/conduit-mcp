@@ -46,7 +46,7 @@ Install the plugin from [GitHub releases](https://github.com/henri14871/conduit-
 
 Most Roblox MCPs give the AI 40-50+ separate tools -- one per API call. That means the model burns tokens just reading tool definitions, and needs multiple round trips for basic tasks.
 
-Conduit takes the opposite approach: **19 workflow-oriented tools**, each doing the work of 3-5 flat tools. `edit_script` handles full replace, range edits, find/replace, and cross-script refactoring in one tool. `playtest` covers start/stop, code execution, console output, runtime inspection, character navigation, and virtual input. `explore` browses the tree, manages selection, lists services, and reports studio state.
+Conduit takes the opposite approach: **19 workflow-oriented tools**, each doing the work of 3-5 flat tools. `edit_script` handles full replace, range edits, find/replace, cross-script refactoring, and batch edits with mixed modes in one tool. `read_script` supports full source, line ranges, structural outlines, and batch reads across multiple scripts in a single call. `playtest` covers start/stop, code execution, console output, runtime inspection, character navigation, virtual input, and viewport screenshots. `explore` browses the tree (with automatic collapsing of repetitive children), manages selection, lists services, and reports studio state.
 
 The result: the AI reads fewer tool definitions, makes fewer calls, and spends tokens on your game -- not on MCP overhead.
 
@@ -62,6 +62,9 @@ The result: the AI reads fewer tool definitions, makes fewer calls, and spends t
 | Script range editing | Yes | Yes | Yes | Yes |
 | Script grep/search | Yes | Yes | Yes | Yes |
 | Multi-script refactor | Yes | -- | -- | -- |
+| Batch read (multi-script) | Yes | -- | -- | -- |
+| Batch edit (mixed modes) | Yes | -- | -- | -- |
+| Script outline/skeleton | Yes | -- | -- | -- |
 | Console/log output | Yes | Yes | Yes | Yes |
 | Runtime inspection | Yes | -- | -- | -- |
 | Playtest control | Yes | Yes | Yes | Paid |
@@ -75,6 +78,8 @@ The result: the AI reads fewer tool definitions, makes fewer calls, and spends t
 | Attributes & tags | Yes | -- | Yes | Yes |
 | Screenshot | Yes | -- | Yes | -- |
 | | | | | |
+| Filtered property reads | Yes | -- | -- | -- |
+| Tree auto-collapsing | Yes | -- | -- | -- |
 | Token-aware responses | Yes | -- | -- | -- |
 | MCP tool annotations | Yes | -- | -- | -- |
 | Built-in API reference | Yes | -- | -- | -- |
@@ -91,20 +96,20 @@ Conduit is the only open-source option with WebSocket transport, workflow-orient
 | Tool | Description |
 |------|-------------|
 | `explore` | Browse instance tree, get/set selection, list services, check studio state |
-| `get_info` | Class, properties, attributes, tags, and typed property list in one call |
+| `get_info` | Class, properties, attributes, tags, typed property list — request specific properties by name for lean responses |
 | `query` | Find instances by class/tag/attribute/name, or grep across all scripts |
 | `create` | Create or clone instances (batch) |
 | `modify` | Set properties/attributes/tags per-instance or in bulk |
 | `delete` | Batch-delete instances |
-| `read_script` | Read script source with optional line ranges |
-| `edit_script` | Full replace, range edit, find/replace, or multi-script refactor |
+| `read_script` | Read source with line ranges, structural outlines, or batch-read multiple scripts in one call |
+| `edit_script` | Full replace, range edit, find/replace, multi-script refactor, or batch edit (mixed modes per script) |
 | `execute_lua` | Run arbitrary Luau in Studio (no playtest required) |
-| `playtest` | Start/stop, execute code, get console output, inspect values, navigate character, simulate input |
+| `playtest` | Start/stop, execute code, get console output, inspect values, navigate character, simulate input, capture screenshots |
 | `environment` | Terrain fill/clear/read, Workspace/Lighting settings |
 | `assets` | Search the Roblox catalog or insert assets by ID |
 | `builds` | Export, import, or list reusable instance trees |
 | `undo_redo` | Undo or redo with count parameter |
-| `transaction` | Group multiple writes into a single Ctrl+Z |
+| `transaction` | Group multiple writes into a single Ctrl+Z (configurable timeout, default 120s) |
 | `screenshot` | Capture viewport screenshot |
 | `lookup_api` | Search bundled Roblox API reference (no Studio needed) |
 | `list_studios` | List connected Studio instances |
@@ -159,6 +164,8 @@ packages/
 ```
 
 Writes execute serially. Reads run in parallel. Every mutation is a single Ctrl+Z via ChangeHistoryService.
+
+**Optimized for AI agents:** Script outlines return function signatures without full source (saving 90%+ tokens on large scripts). Batch reads and batch edits collapse multiple round trips into one call. Tree exploration auto-collapses repetitive same-class children (e.g. 100+ MemStorageConnections become 3 samples + a count). Transactions group multi-edit sessions into a single undo point with configurable timeouts (up to 300s) for long AI workflows. Property reads can target specific properties by name instead of dumping all 60+.
 
 ## Compatible Clients
 

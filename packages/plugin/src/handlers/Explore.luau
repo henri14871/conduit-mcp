@@ -62,6 +62,43 @@ local function buildTree(
 				table.insert(children, childNode)
 			end
 		end
+
+		-- Collapse repetitive same-class children to save tokens
+		if #children > 5 then
+			local byClass: { [string]: { { [string]: any } } } = {}
+			local classOrder: { string } = {}
+			for _, child in children do
+				local cn = child.className
+				if not byClass[cn] then
+					byClass[cn] = {}
+					table.insert(classOrder, cn)
+				end
+				table.insert(byClass[cn], child)
+			end
+
+			local collapsed: { { [string]: any } } = {}
+			for _, cn in classOrder do
+				local group = byClass[cn]
+				if #group > 5 then
+					-- Keep first 3, collapse the rest
+					for i = 1, 3 do
+						table.insert(collapsed, group[i])
+					end
+					table.insert(collapsed, {
+						name = `... +{#group - 3} more {cn}`,
+						className = "_collapsed",
+						collapsedCount = #group - 3,
+						collapsedClassName = cn,
+					})
+				else
+					for _, child in group do
+						table.insert(collapsed, child)
+					end
+				end
+			end
+			children = collapsed
+		end
+
 		if #children > 0 then
 			node.children = children
 		end

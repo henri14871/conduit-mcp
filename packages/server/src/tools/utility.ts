@@ -134,7 +134,7 @@ export function register(server: McpServer, bridge: Bridge): void {
         "- `begin`: Start a transaction. All subsequent writes share one undo recording.\n" +
         "- `commit`: Finish and commit all changes as one undo point.\n" +
         "- `rollback`: Cancel and revert all changes since begin.\n\n" +
-        "Transactions auto-rollback after 60 seconds if not committed.",
+        "Transactions auto-rollback after the timeout (default 120s) if not committed.",
       inputSchema: z.object({
         action: z
           .enum(["begin", "commit", "rollback"])
@@ -143,6 +143,13 @@ export function register(server: McpServer, bridge: Bridge): void {
           .string()
           .optional()
           .describe("Transaction name for the undo history (for 'begin' action)"),
+        timeout: z
+          .number()
+          .int()
+          .min(10)
+          .max(300)
+          .optional()
+          .describe("Auto-rollback timeout in seconds (default 120, min 10, max 300). Increase for large multi-edit sessions."),
       }),
       annotations: {
         readOnlyHint: false,
@@ -158,6 +165,7 @@ export function register(server: McpServer, bridge: Bridge): void {
         try {
           const result = (await bridge.send("begin_transaction", {
             name: params.name,
+            timeout: params.timeout,
           })) as { transactionId: string; status: string };
           transactionState.set(studioId, true);
           return {

@@ -18,9 +18,26 @@ function registerReadScript(server: McpServer, bridge: Bridge): void {
     {
       title: "Read Script Source",
       description:
-        "Read the Lua source code of a script instance. Optionally restrict to a line range. Use outline=true to get just function signatures and top-level declarations with line numbers — much cheaper than reading the full source for large scripts.",
+        "Read the Lua source code of a script instance. Optionally restrict to a line range. Use outline=true to get just function signatures and top-level declarations with line numbers — much cheaper than reading the full source for large scripts.\n\n" +
+        "Supports batch mode: pass `paths` (array) instead of `path` to read multiple scripts in a single call. Each entry can independently use outline or lineRange.",
       inputSchema: z.object({
-        path: z.string().describe("Path to the script instance"),
+        path: z.string().optional().describe("Path to a single script instance"),
+        paths: z
+          .array(
+            z.object({
+              path: z.string().describe("Script path"),
+              outline: z.boolean().default(false).describe("Return outline instead of source"),
+              lineRange: z
+                .object({
+                  start: z.number().int().min(1).describe("Start line (1-based)"),
+                  end: z.number().int().min(1).describe("End line (1-based, inclusive)"),
+                })
+                .optional()
+                .describe("Optional line range"),
+            }),
+          )
+          .optional()
+          .describe("Batch mode: read multiple scripts in one call. Each entry can independently use outline or lineRange."),
         outline: z
           .boolean()
           .default(false)
@@ -47,10 +64,69 @@ function registerReadScript(server: McpServer, bridge: Bridge): void {
       },
     },
     async (params) => {
+      // ── batch mode ────────────────────────────────────────────
+      if (params.paths && params.paths.length > 0) {
+        const result = (await bridge.send("batch_read_scripts", {
+          scripts: params.paths,
+        })) as {
+          results: Array<{
+            path: string;
+            source?: string;
+            totalLines: number;
+            lineRange?: { start: number; end: number };
+            outline?: Array<{ line: number; text: string; kind: string; indent: number }>;
+          }>;
+          errors?: Array<{ path: string; error: string }>;
+        };
+
+        const sections: string[] = [];
+
+        for (const r of result.results) {
+          if (r.outline) {
+            const lines = [`### Outline: \`${r.path}\` (${r.totalLines} lines)`, ""];
+            for (const entry of r.outline) {
+              const pad = " ".repeat(entry.indent);
+              lines.push(`${entry.line}: ${pad}${entry.text}`);
+            }
+            if (r.outline.length === 0) {
+              lines.push("*No functions, type definitions, or top-level declarations found.*");
+            }
+            sections.push(lines.join("\n"));
+          } else {
+            sections.push(formatScript(r.source ?? "", r.path));
+          }
+        }
+
+        if (result.errors && result.errors.length > 0) {
+          const errLines = ["**Errors:**"];
+          for (const e of result.errors) {
+            errLines.push(`- \`${e.path}\`: ${e.error}`);
+          }
+          sections.push(errLines.join("\n"));
+        }
+
+        const text = sections.join("\n\n---\n\n");
+        return {
+          content: [
+            { type: "text", text: applyTokenBudget(text, params.maxTokens) },
+          ],
+        };
+      }
+
+      // ── single-script modes require path ────────────────────
+      if (!params.paths && !params.path) {
+        return {
+          content: [{ type: "text", text: "Provide either `path` (single script) or `paths` (batch read)." }],
+          isError: true,
+        };
+      }
+
+      const path = params.path!;
+
       // ── outline mode ──────────────────────────────────────────
       if (params.outline) {
         const result = (await bridge.send("outline_script", {
-          path: params.path,
+          path,
         })) as {
           path: string;
           totalLines: number;
@@ -92,10 +168,10 @@ function registerReadScript(server: McpServer, bridge: Bridge): void {
         };
       }
       const result = (await bridge.send("read_script", {
-        path: params.path,
+        path,
         lineRange: params.lineRange,
       })) as { source: string };
-      const text = formatScript(result.source, params.path);
+      const text = formatScript(result.source, path);
       return {
         content: [
           { type: "text", text: applyTokenBudget(text, params.maxTokens) },
@@ -159,14 +235,15 @@ function registerWriteTools(server: McpServer, bridge: Bridge): void {
           .array(
             z.object({
               path: z.string().describe("Script path"),
-              find: z.string().describe("Text or pattern to find"),
-              replace: z.string().default("").describe("Replacement text"),
-              regex: z.boolean().default(false).describe("Treat find as a Lua pattern"),
+              source: z.string().optional().describe("Complete new source (for full replacement). Mutually exclusive with find/replace."),
+              find: z.string().optional().describe("Text or pattern to find"),
+              replace: z.string().default("").describe("Replacement text (used with find)"),
+              regex: z.boolean().default(false).describe("Treat find as a Lua pattern (used with find)"),
             }),
           )
           .optional()
           .describe(
-            "Array of per-script find/replace operations (for 'batch' mode). Each entry targets a different script with its own find/replace pair.",
+            "Array of per-script edit operations (for 'batch' mode). Each entry can either use `source` for full replacement or `find`/`replace` for targeted edits.",
           ),
       }),
       annotations: {
@@ -258,10 +335,26 @@ function registerWriteTools(server: McpServer, bridge: Bridge): void {
           };
         }
 
+        // Validate each entry has either source or find, not both
+        for (const entry of params.batch) {
+          if (entry.source !== undefined && entry.find !== undefined) {
+            return {
+              content: [{ type: "text", text: `Batch entry for \`${entry.path}\`: provide either \`source\` or \`find\`, not both.` }],
+              isError: true,
+            };
+          }
+          if (entry.source === undefined && entry.find === undefined) {
+            return {
+              content: [{ type: "text", text: `Batch entry for \`${entry.path}\`: must provide either \`source\` (full replacement) or \`find\` (find/replace).` }],
+              isError: true,
+            };
+          }
+        }
+
         const result = (await bridge.send("batch_edit_scripts", {
           edits: params.batch,
         })) as {
-          results: Array<{ path: string; success: boolean; replacements?: number }>;
+          results: Array<{ path: string; success: boolean; mode: string; replacements?: number }>;
           scriptsModified: number;
           errors?: Array<{ path: string; error: string }>;
         };
@@ -273,7 +366,11 @@ function registerWriteTools(server: McpServer, bridge: Bridge): void {
 
         for (const r of result.results) {
           if (r.success) {
-            lines.push(`- \`${r.path}\`: ${r.replacements ?? 0} replacement(s)`);
+            if (r.mode === "full") {
+              lines.push(`- \`${r.path}\`: full source replaced`);
+            } else {
+              lines.push(`- \`${r.path}\`: ${r.replacements ?? 0} replacement(s)`);
+            }
           }
         }
 
