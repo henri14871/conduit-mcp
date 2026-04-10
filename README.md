@@ -40,7 +40,7 @@ Add this to your AI client's MCP config:
 }
 ```
 
-Grab the plugin from [releases](https://github.com/henri14871/conduit-mcp/releases) or build it yourself with Rojo. You'll need Node 18+ and HttpService enabled in Studio.
+Grab the plugin from the [Roblox Creator Store](https://create.roblox.com/store/asset/73971021844128/Conduit-MCP), [GitHub releases](https://github.com/henri14871/conduit-mcp/releases), or build it yourself with Rojo. You'll need Node 18+ and HttpService enabled in Studio.
 
 </details>
 

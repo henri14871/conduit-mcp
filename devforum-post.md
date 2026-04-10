@@ -55,6 +55,7 @@ I was using other MCP tools for a while and kept running into the same problems.
 
 ## Links
 
+- Plugin: https://create.roblox.com/store/asset/73971021844128/Conduit-MCP
 - GitHub: https://github.com/henri14871/conduit-mcp
 - npm: `conduit-mcp`
 
