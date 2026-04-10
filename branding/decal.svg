@@ -1,0 +1,16 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <title>Conduit MCP Decal</title>
+
+  <!-- C letterform with connection dots — centered in square -->
+  <g transform="translate(120, 100)">
+    <path d="M148 12 A80 80 0 1 0 148 172" fill="none" stroke="#ef4444" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="148" cy="12" r="16" fill="#ef4444"/>
+    <circle cx="148" cy="172" r="16" fill="#ef4444"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="256" y="360" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="64" font-weight="500" fill="#e2e1dc" text-anchor="middle">conduit</text>
+
+  <!-- Subtitle -->
+  <text x="256" y="400" font-family="ui-monospace, monospace" font-size="28" font-weight="400" fill="#9c9a92" text-anchor="middle">mcp</text>
+</svg>

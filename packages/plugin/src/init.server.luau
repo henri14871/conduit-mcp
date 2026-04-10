@@ -18,7 +18,7 @@ local toolbar = plugin:CreateToolbar("Conduit MCP")
 local toggleButton = toolbar:CreateButton(
 	"ConduitToggle",
 	"Open Conduit MCP Dashboard",
-	"rbxassetid://0",
+	"rbxassetid://103184859459538",
 	"Conduit"
 )
 
