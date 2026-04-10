@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/conduit-mcp"><img src="https://img.shields.io/npm/v/conduit-mcp" alt="npm version" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-BSL--1.1-blue.svg" alt="License: BSL 1.1" /></a>
   <a href="https://github.com/henri14871/conduit-mcp"><img src="https://img.shields.io/github/stars/henri14871/conduit-mcp" alt="GitHub stars" /></a>
 </p>
 
@@ -61,7 +61,7 @@ The result: the AI reads fewer tool definitions, makes fewer calls, and spends t
 | **Transport** | WebSocket | Native | HTTP polling | HTTP |
 | **Latency** | <50ms | Native | 200-500ms | 200-500ms |
 | **Tool design** | Workflow (19 tools) | Workflow (16 tools) | 1:1 mapping (39 tools) | Action-based (22 tools, 150+ actions) |
-| **License** | MIT | Closed source | MIT | AGPL (Pro = paid) |
+| **License** | BSL 1.1 | Closed source | MIT | AGPL (Pro = paid) |
 | | | | | |
 | Script range editing | Yes | Yes | Yes | Yes |
 | Script grep/search | Yes | Yes | Yes | Yes |
@@ -189,4 +189,4 @@ PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. [Open an iss
 
 ## License
 
-MIT -- Henri Elliott-Knight / Knight & Co Digital
+BSL 1.1 -- see [LICENSE](LICENSE) for full terms. Converts to Apache 2.0 on 2030-04-10.

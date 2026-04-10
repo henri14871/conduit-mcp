@@ -39,7 +39,7 @@
     "windsurf"
   ],
   "author": "Henri Elliott-Knight <henri@knightco.digital>",
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/henri14871/conduit-mcp.git"
