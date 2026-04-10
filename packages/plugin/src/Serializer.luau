@@ -7,8 +7,65 @@ local Serializer = {}
 -- ── Path resolution ──────────────────────────────────────────────
 
 function Serializer.resolvePath(pathStr: string): Instance?
-	-- Handle "game" or "game.Workspace.Part" style paths
-	local segments = pathStr:split(".")
+	-- Parse path segments supporting both dot notation and bracket notation:
+	--   game.Workspace.Part
+	--   game.ServerScriptService["Lighting Server"]
+	--   game["Workspace"]["My Part"]
+	local segments: { string } = {}
+	local pos = 1
+	local len = #pathStr
+
+	while pos <= len do
+		if pathStr:sub(pos, pos) == "[" then
+			-- Bracket notation: ["name"] or ['name']
+			local quote = pathStr:sub(pos + 1, pos + 1)
+			if quote == '"' or quote == "'" then
+				local closePos = pathStr:find(quote .. "]", pos + 2, true)
+				if closePos then
+					table.insert(segments, pathStr:sub(pos + 2, closePos - 1))
+					pos = closePos + 2
+					-- Skip trailing dot if present
+					if pos <= len and pathStr:sub(pos, pos) == "." then
+						pos = pos + 1
+					end
+				else
+					-- Malformed bracket, treat rest as one segment
+					table.insert(segments, pathStr:sub(pos))
+					break
+				end
+			else
+				-- Bracket without quotes, treat as dot segment
+				table.insert(segments, pathStr:sub(pos))
+				break
+			end
+		else
+			-- Dot notation: read until next "." or "["
+			local nextDot = pathStr:find(".", pos, true)
+			local nextBracket = pathStr:find("[", pos, true)
+			local segEnd: number
+
+			if nextDot and nextBracket then
+				segEnd = math.min(nextDot, nextBracket) - 1
+			elseif nextDot then
+				segEnd = nextDot - 1
+			elseif nextBracket then
+				segEnd = nextBracket - 1
+			else
+				segEnd = len
+			end
+
+			local seg = pathStr:sub(pos, segEnd)
+			if seg ~= "" then
+				table.insert(segments, seg)
+			end
+
+			pos = segEnd + 1
+			if pos <= len and pathStr:sub(pos, pos) == "." then
+				pos = pos + 1
+			end
+		end
+	end
+
 	local current: Instance = game
 
 	local startIdx = 1
@@ -27,10 +84,6 @@ function Serializer.resolvePath(pathStr: string): Instance?
 	return current
 end
 
--- Known limitation: paths use "." as delimiter, so instance names containing
--- dots (e.g. "my.model") will produce ambiguous paths like "game.Workspace.my.model".
--- This is a protocol-level constraint shared with the server; changing the delimiter
--- would be a breaking change. Avoid dots in instance names when possible.
 function Serializer.getPath(instance: Instance): string
 	if instance == game then
 		return "game"
@@ -38,10 +91,26 @@ function Serializer.getPath(instance: Instance): string
 	local parts = {}
 	local current: Instance? = instance
 	while current and current ~= game do
-		table.insert(parts, 1, current.Name)
+		local name = current.Name
+		-- Use bracket notation for names with special characters
+		if name:find("[%.%[%]\"' ]") then
+			table.insert(parts, 1, '["' .. name .. '"]')
+		else
+			table.insert(parts, 1, name)
+		end
 		current = current.Parent
 	end
-	return "game." .. table.concat(parts, ".")
+
+	-- Build path, avoiding double dots before bracket segments
+	local result = "game"
+	for _, part in parts do
+		if part:sub(1, 1) == "[" then
+			result = result .. part
+		else
+			result = result .. "." .. part
+		end
+	end
+	return result
 end
 
 -- ── Serialization (Roblox → JSON-safe) ──────────────────────────
