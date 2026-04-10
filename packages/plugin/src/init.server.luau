@@ -4,6 +4,18 @@ local Connection = require(script.Connection)
 local CommandRouter = require(script.CommandRouter)
 local Dashboard = require(script.Dashboard)
 
+-- ── Resolve place name ─────────────────────────────────────────
+
+local placeName: string = game.Name
+if game.PlaceId ~= 0 then
+	local ok, info = pcall(function()
+		return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+	end)
+	if ok and info and info.Name then
+		placeName = info.Name
+	end
+end
+
 -- ── Settings ────────────────────────────────────────────────────
 
 local savedPort = plugin:GetSetting("ConduitPort")
@@ -44,7 +56,7 @@ local dashboard = Dashboard.new(widget, plugin)
 -- Apply saved settings to dashboard
 dashboard:setPort(PORT)
 dashboard:setAutoConnect(AUTO_CONNECT)
-dashboard:updateStudioInfo(PORT, game.Name)
+dashboard:updateStudioInfo(PORT, placeName)
 
 -- ── Register all handlers ────────────────────────────────────────
 
@@ -71,7 +83,7 @@ connection:onStatusChange(function(status)
 
 	-- Update dashboard
 	dashboard:updateStatus(status)
-	dashboard:updateStudioInfo(connection:getPort(), game.Name)
+	dashboard:updateStudioInfo(connection:getPort(), placeName)
 
 	-- Cancel health polling whenever we leave "connected" state
 	if status ~= "connected" and healthPollThread then
@@ -143,7 +155,7 @@ end)
 
 dashboard:onPortChange(function(port)
 	connection:setPort(port)
-	dashboard:updateStudioInfo(port, game.Name)
+	dashboard:updateStudioInfo(port, placeName)
 end)
 
 -- ── Toolbar button toggles dashboard visibility ─────────────────

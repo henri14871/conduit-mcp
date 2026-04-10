@@ -227,19 +227,19 @@ end
 
 function StatusBar._refreshInfoLine(self: StatusBar)
 	local parts = { "Port: " .. tostring(self._currentPort) }
-	if self._currentPlaceName and self._currentPlaceName ~= "" then
-		table.insert(parts, self._currentPlaceName)
+	local nameStr = self._currentPlaceName or ""
+	if nameStr ~= "" then
+		if self._studioCount and self._studioCount > 1 then
+			nameStr ..= " (" .. tostring(self._studioCount) .. ")"
+			if self._isActiveStudio then
+				nameStr ..= " active"
+			end
+		end
+		table.insert(parts, nameStr)
 	end
 	if self._connectedAt then
 		local elapsed = os.clock() - self._connectedAt
 		table.insert(parts, "Up: " .. Util.formatDuration(elapsed))
-	end
-	if self._studioCount and self._studioCount > 0 then
-		local studioStr = "Studios: " .. tostring(self._studioCount)
-		if self._isActiveStudio then
-			studioStr ..= " (active)"
-		end
-		table.insert(parts, studioStr)
 	end
 	self._infoLabel.Text = table.concat(parts, "  |  ")
 end
