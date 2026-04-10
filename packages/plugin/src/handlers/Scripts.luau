@@ -22,9 +22,9 @@ local function register(router: any)
 			error("read_script requires a path")
 		end
 
-		local instance = Serializer.resolvePath(path)
+		local instance, resolveErr = Serializer.resolvePathOrError(path)
 		if not instance then
-			error(`Could not resolve path: {path}`)
+			error(resolveErr)
 		end
 
 		if not instance:IsA("LuaSourceContainer") then
@@ -62,9 +62,9 @@ local function register(router: any)
 			error("outline_script requires a path")
 		end
 
-		local instance = Serializer.resolvePath(path)
+		local instance, resolveErr = Serializer.resolvePathOrError(path)
 		if not instance then
-			error(`Could not resolve path: {path}`)
+			error(resolveErr)
 		end
 
 		if not instance:IsA("LuaSourceContainer") then
@@ -160,9 +160,9 @@ local function register(router: any)
 					error("Each entry requires a path")
 				end
 
-				local instance = Serializer.resolvePath(path)
+				local instance, resolveErr = Serializer.resolvePathOrError(path)
 				if not instance then
-					error(`Could not resolve path: {path}`)
+					error(resolveErr)
 				end
 				if not instance:IsA("LuaSourceContainer") then
 					error(`Instance at {path} is not a script (got {instance.ClassName})`)
@@ -243,9 +243,9 @@ local function register(router: any)
 			error("edit_script requires a mode (full, range, or find_replace)")
 		end
 
-		local instance = Serializer.resolvePath(path)
+		local instance, resolveErr = Serializer.resolvePathOrError(path)
 		if not instance then
-			error(`Could not resolve path: {path}`)
+			error(resolveErr)
 		end
 
 		if not instance:IsA("LuaSourceContainer") then
@@ -410,9 +410,9 @@ local function register(router: any)
 
 		for _, path in scripts do
 			local ok, err = pcall(function()
-				local instance = Serializer.resolvePath(path)
+				local instance, resolveErr = Serializer.resolvePathOrError(path)
 				if not instance then
-					error(`Could not resolve path: {path}`)
+					error(resolveErr)
 				end
 				if not instance:IsA("LuaSourceContainer") then
 					error(`Instance at {path} is not a script (got {instance.ClassName})`)
@@ -484,9 +484,9 @@ local function register(router: any)
 					error("Each edit requires a path")
 				end
 
-				local instance = Serializer.resolvePath(path)
+				local instance, resolveErr = Serializer.resolvePathOrError(path)
 				if not instance then
-					error(`Could not resolve path: {path}`)
+					error(resolveErr)
 				end
 				if not instance:IsA("LuaSourceContainer") then
 					error(`Instance at {path} is not a script (got {instance.ClassName})`)

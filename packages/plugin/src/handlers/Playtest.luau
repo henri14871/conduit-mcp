@@ -404,9 +404,9 @@ local function register(router: any)
 		local targetPos: Vector3
 		if params.targetPath then
 			local Serializer = require(script.Parent.Parent.Serializer)
-			local targetInstance = Serializer.resolvePath(params.targetPath)
+			local targetInstance, resolveErr = Serializer.resolvePathOrError(params.targetPath)
 			if not targetInstance then
-				error(`Could not resolve target path: {params.targetPath}`)
+				error(resolveErr)
 			end
 			local ok, pos = pcall(function()
 				return (targetInstance :: any).Position

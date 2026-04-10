@@ -6,7 +6,7 @@ local Serializer = {}
 
 -- ── Path resolution ──────────────────────────────────────────────
 
-function Serializer.resolvePath(pathStr: string): Instance?
+local function parsePathSegments(pathStr: string): { string }
 	-- Parse path segments supporting both dot notation and bracket notation:
 	--   game.Workspace.Part
 	--   game.ServerScriptService["Lighting Server"]
@@ -66,6 +66,11 @@ function Serializer.resolvePath(pathStr: string): Instance?
 		end
 	end
 
+	return segments
+end
+
+function Serializer.resolvePath(pathStr: string): Instance?
+	local segments = parsePathSegments(pathStr)
 	local current: Instance = game
 
 	local startIdx = 1
@@ -82,6 +87,64 @@ function Serializer.resolvePath(pathStr: string): Instance?
 	end
 
 	return current
+end
+
+function Serializer.resolvePathOrError(pathStr: string): (Instance?, string?)
+	local segments = parsePathSegments(pathStr)
+	local current: Instance = game
+
+	local startIdx = 1
+	if segments[1] == "game" then
+		startIdx = 2
+	end
+
+	for i = startIdx, #segments do
+		local segName = segments[i]
+		local child = current:FindFirstChild(segName)
+		if not child then
+			-- Build the resolved-so-far path
+			local resolvedPath = Serializer.getPath(current)
+
+			-- Check for duplicate-named siblings at previous step
+			local dupeHint = ""
+			if i > startIdx then
+				local parentName = segments[i - 1]
+				local grandparent = current.Parent
+				if grandparent then
+					local dupeCount = 0
+					for _, sibling in grandparent:GetChildren() do
+						if sibling.Name == parentName then
+							dupeCount += 1
+						end
+					end
+					if dupeCount > 1 then
+						dupeHint = ` (note: {dupeCount} instances named "{parentName}" exist under {Serializer.getPath(grandparent)}, resolved to the first one)`
+					end
+				end
+			end
+
+			-- List children of the last resolved instance
+			local children = current:GetChildren()
+			if #children == 0 then
+				return nil, `Could not resolve path: {pathStr}. "{segName}" not found under {resolvedPath} (has no children){dupeHint}`
+			end
+
+			local childNames = {}
+			local limit = math.min(#children, 10)
+			for j = 1, limit do
+				table.insert(childNames, children[j].Name)
+			end
+			local childList = table.concat(childNames, ", ")
+			if #children > limit then
+				childList ..= `, ... ({#children} total)`
+			end
+
+			return nil, `Could not resolve path: {pathStr}. "{segName}" not found under {resolvedPath}. Children: [{childList}]{dupeHint}`
+		end
+		current = child
+	end
+
+	return current, nil
 end
 
 function Serializer.getPath(instance: Instance): string
@@ -241,6 +304,12 @@ function Serializer.deserialize(data: any): any
 
 	local dataType = data.Type
 	if not dataType then
+		-- No Type tag — try to infer from structure
+		local inferred = Serializer._inferType(data)
+		if inferred then
+			return inferred
+		end
+
 		-- Plain table — recurse
 		local result = {}
 		for k, v in data do
@@ -329,6 +398,90 @@ function Serializer.deserialize(data: any): any
 	return data
 end
 
+-- Infer Roblox types from untagged data shapes (no "Type" field).
+-- Handles the formats AI clients naturally produce.
+function Serializer._inferType(data: any): any
+	-- Array formats: [R,G,B], [X,Y], [X,Y,Z], [XScale,XOffset,YScale,YOffset]
+	if data[1] ~= nil then
+		-- Don't infer arrays — they're ambiguous without property context.
+		-- Type-aware coercion in applyProperties handles these.
+		return nil
+	end
+
+	-- UDim2: {X: {Scale, Offset}, Y: {Scale, Offset}}
+	if type(data.X) == "table" and type(data.Y) == "table"
+		and data.X.Scale ~= nil and data.X.Offset ~= nil
+		and data.Y.Scale ~= nil and data.Y.Offset ~= nil then
+		return UDim2.new(data.X.Scale, data.X.Offset, data.Y.Scale, data.Y.Offset)
+	end
+
+	-- UDim: {Scale, Offset} (no X/Y)
+	if data.Scale ~= nil and data.Offset ~= nil and data.X == nil then
+		return UDim.new(data.Scale, data.Offset)
+	end
+
+	-- Vector3: {X, Y, Z} (all numbers, no Scale/Offset)
+	if type(data.X) == "number" and type(data.Y) == "number" and type(data.Z) == "number"
+		and data.Scale == nil and data.Offset == nil then
+		return Vector3.new(data.X, data.Y, data.Z)
+	end
+
+	-- Vector2: {X, Y} (both numbers, no Z, no Scale/Offset)
+	if type(data.X) == "number" and type(data.Y) == "number"
+		and data.Z == nil and data.Scale == nil and data.Offset == nil then
+		return Vector2.new(data.X, data.Y)
+	end
+
+	-- Color3: {R, G, B}
+	if type(data.R) == "number" and type(data.G) == "number" and type(data.B) == "number" then
+		-- Detect 0-255 vs 0-1 range
+		if data.R > 1 or data.G > 1 or data.B > 1 then
+			return Color3.fromRGB(data.R, data.G, data.B)
+		end
+		return Color3.new(data.R, data.G, data.B)
+	end
+
+	-- NumberRange: {Min, Max}
+	if type(data.Min) == "number" and type(data.Max) == "number" then
+		return NumberRange.new(data.Min, data.Max)
+	end
+
+	-- Rect: {Min: {X,Y}, Max: {X,Y}}
+	if type(data.Min) == "table" and type(data.Max) == "table"
+		and type(data.Min.X) == "number" and type(data.Min.Y) == "number"
+		and type(data.Max.X) == "number" and type(data.Max.Y) == "number" then
+		return Rect.new(data.Min.X, data.Min.Y, data.Max.X, data.Max.Y)
+	end
+
+	-- CFrame: {Position: {X,Y,Z}, ...}
+	if type(data.Position) == "table" and type(data.Position.X) == "number" then
+		local pos = Vector3.new(data.Position.X, data.Position.Y, data.Position.Z)
+		if data.Orientation then
+			return CFrame.new(pos)
+				* CFrame.fromEulerAnglesYXZ(
+					math.rad(data.Orientation.X),
+					math.rad(data.Orientation.Y),
+					math.rad(data.Orientation.Z)
+				)
+		end
+		return CFrame.new(pos)
+	end
+
+	-- Enum: {EnumType, Name} or {EnumType, Value}
+	if type(data.EnumType) == "string" then
+		local enumType = (Enum :: any)[data.EnumType]
+		if enumType then
+			if data.Name then
+				return enumType[data.Name]
+			elseif data.Value ~= nil then
+				return enumType[data.Value]
+			end
+		end
+	end
+
+	return nil
+end
+
 -- ── Property helpers ──────────────────────────────────────────────
 
 function Serializer.serializeProperties(instance: Instance, propertyNames: { string }?): { [string]: any }
@@ -362,6 +515,32 @@ end
 function Serializer.applyProperties(instance: Instance, properties: { [string]: any })
 	for propName, rawValue in properties do
 		local value = Serializer.deserialize(rawValue)
+
+		-- Type-aware coercion: read the existing property to know the expected type,
+		-- then convert arrays, plain tables, and strings that deserialize didn't catch.
+		local existingOk, existing = pcall(function()
+			return (instance :: any)[propName]
+		end)
+		if existingOk and existing ~= nil then
+			if type(value) == "table" then
+				local coerced = Serializer._coerceToType(value, existing)
+				if coerced ~= nil then
+					value = coerced
+				end
+			elseif type(value) == "string" and typeof(existing) == "EnumItem" then
+				-- Coerce string to enum: "Gotham" → Enum.Font.Gotham
+				local enumType = (Enum :: any)[tostring(existing.EnumType)]
+				if enumType then
+					local enumOk, enumVal = pcall(function()
+						return enumType[value]
+					end)
+					if enumOk and enumVal then
+						value = enumVal
+					end
+				end
+			end
+		end
+
 		local ok, err = pcall(function()
 			(instance :: any)[propName] = value
 		end)
@@ -369,6 +548,108 @@ function Serializer.applyProperties(instance: Instance, properties: { [string]: 
 			warn("[Conduit] Failed to set " .. propName .. ": " .. tostring(err))
 		end
 	end
+end
+
+-- Coerce a raw table/array to match the type of an existing property value.
+-- Handles array formats like [0.5, 0.5] for Vector2, [R,G,B] for Color3, etc.
+function Serializer._coerceToType(data: any, existing: any): any
+	local existingType = typeof(existing)
+
+	if existingType == "Vector2" then
+		-- [X, Y] or {X, Y}
+		if data[1] ~= nil then
+			return Vector2.new(data[1], data[2] or 0)
+		elseif data.X ~= nil then
+			return Vector2.new(data.X, data.Y or 0)
+		end
+	end
+
+	if existingType == "Vector3" then
+		-- [X, Y, Z] or {X, Y, Z}
+		if data[1] ~= nil then
+			return Vector3.new(data[1], data[2] or 0, data[3] or 0)
+		elseif data.X ~= nil then
+			return Vector3.new(data.X, data.Y or 0, data.Z or 0)
+		end
+	end
+
+	if existingType == "UDim2" then
+		-- [XScale, XOffset, YScale, YOffset]
+		if data[1] ~= nil then
+			return UDim2.new(data[1], data[2] or 0, data[3] or 0, data[4] or 0)
+		end
+		-- {X: {Scale, Offset}, Y: {Scale, Offset}}
+		if type(data.X) == "table" and type(data.Y) == "table" then
+			return UDim2.new(
+				data.X.Scale or 0, data.X.Offset or 0,
+				data.Y.Scale or 0, data.Y.Offset or 0
+			)
+		end
+	end
+
+	if existingType == "UDim" then
+		-- [Scale, Offset]
+		if data[1] ~= nil then
+			return UDim.new(data[1], data[2] or 0)
+		end
+		if data.Scale ~= nil then
+			return UDim.new(data.Scale, data.Offset or 0)
+		end
+	end
+
+	if existingType == "Color3" then
+		-- [R, G, B]
+		if data[1] ~= nil then
+			if data[1] > 1 or data[2] > 1 or data[3] > 1 then
+				return Color3.fromRGB(data[1], data[2], data[3])
+			end
+			return Color3.new(data[1], data[2], data[3])
+		end
+		if data.R ~= nil then
+			if data.R > 1 or data.G > 1 or data.B > 1 then
+				return Color3.fromRGB(data.R, data.G, data.B)
+			end
+			return Color3.new(data.R, data.G, data.B)
+		end
+	end
+
+	if existingType == "CFrame" then
+		-- [X, Y, Z] as position-only
+		if data[1] ~= nil then
+			return CFrame.new(data[1], data[2] or 0, data[3] or 0)
+		end
+		if type(data.Position) == "table" then
+			local pos = Vector3.new(data.Position.X or 0, data.Position.Y or 0, data.Position.Z or 0)
+			if data.Orientation then
+				return CFrame.new(pos)
+					* CFrame.fromEulerAnglesYXZ(
+						math.rad(data.Orientation.X or 0),
+						math.rad(data.Orientation.Y or 0),
+						math.rad(data.Orientation.Z or 0)
+					)
+			end
+			return CFrame.new(pos)
+		end
+		if data.X ~= nil then
+			return CFrame.new(data.X, data.Y or 0, data.Z or 0)
+		end
+	end
+
+	if existingType == "Rect" then
+		-- [MinX, MinY, MaxX, MaxY]
+		if data[1] ~= nil then
+			return Rect.new(data[1], data[2] or 0, data[3] or 0, data[4] or 0)
+		end
+	end
+
+	if existingType == "NumberRange" then
+		-- [Min, Max]
+		if data[1] ~= nil then
+			return NumberRange.new(data[1], data[2] or data[1])
+		end
+	end
+
+	return nil
 end
 
 return Serializer

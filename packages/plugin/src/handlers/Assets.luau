@@ -14,9 +14,9 @@ local function register(router: any)
 			error("insert_asset requires a parent path")
 		end
 
-		local parent = Serializer.resolvePath(parentPath)
+		local parent, resolveErr = Serializer.resolvePathOrError(parentPath)
 		if not parent then
-			error(`Could not resolve parent path: {parentPath}`)
+			error(resolveErr)
 		end
 
 		local model = InsertService:LoadAsset(assetId)

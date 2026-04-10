@@ -24,9 +24,9 @@ local function register(router: any)
 				error(`Operation {i}: parent is required`)
 			end
 
-			local parent = Serializer.resolvePath(parentPath)
+			local parent, resolveErr = Serializer.resolvePathOrError(parentPath)
 			if not parent then
-				error(`Operation {i}: could not resolve parent path: {parentPath}`)
+				error(`Operation {i}: {resolveErr}`)
 			end
 
 			local instance = Instance.new(className)
@@ -66,9 +66,9 @@ local function register(router: any)
 				error(`Operation {i}: path is required`)
 			end
 
-			local instance = Serializer.resolvePath(path)
+			local instance, resolveErr = Serializer.resolvePathOrError(path)
 			if not instance then
-				error(`Operation {i}: could not resolve path: {path}`)
+				error(`Operation {i}: {resolveErr}`)
 			end
 
 			local modified: { string } = {}
@@ -106,9 +106,9 @@ local function register(router: any)
 			end
 
 			if op.parent then
-				local newParent = Serializer.resolvePath(op.parent)
+				local newParent, parentErr = Serializer.resolvePathOrError(op.parent)
 				if not newParent then
-					error(`Operation {i}: could not resolve new parent path: {op.parent}`)
+					error(`Operation {i}: {parentErr}`)
 				end
 				instance.Parent = newParent
 				table.insert(modified, "parent")
@@ -133,9 +133,9 @@ local function register(router: any)
 		local deleted: { string } = {}
 
 		for _, path in paths do
-			local instance = Serializer.resolvePath(path)
+			local instance, resolveErr = Serializer.resolvePathOrError(path)
 			if not instance then
-				error(`Could not resolve path: {path}`)
+				error(resolveErr)
 			end
 			instance:Destroy()
 			table.insert(deleted, path)
@@ -156,17 +156,17 @@ local function register(router: any)
 			error("clone_instances requires a targetParent")
 		end
 
-		local targetParent = Serializer.resolvePath(targetParentPath)
+		local targetParent, targetErr = Serializer.resolvePathOrError(targetParentPath)
 		if not targetParent then
-			error(`Could not resolve target parent path: {targetParentPath}`)
+			error(targetErr)
 		end
 
 		local cloned: { { path: string, className: string, name: string } } = {}
 
 		for _, sourcePath in sources do
-			local source = Serializer.resolvePath(sourcePath)
+			local source, sourceErr = Serializer.resolvePathOrError(sourcePath)
 			if not source then
-				error(`Could not resolve source path: {sourcePath}`)
+				error(sourceErr)
 			end
 
 			local clone = source:Clone()
@@ -191,9 +191,9 @@ local function register(router: any)
 		local filters = params.filters or {}
 		local limit: number = params.limit or 50
 
-		local root = Serializer.resolvePath(basePath)
+		local root, resolveErr = Serializer.resolvePathOrError(basePath)
 		if not root then
-			error(`Could not resolve base path: {basePath}`)
+			error(resolveErr)
 		end
 
 		local filterClassName: string? = filters.className
@@ -272,12 +272,12 @@ local function register(router: any)
 		local failed: { { path: string, error: string } } = {}
 
 		for _, path in paths do
-			local instance = Serializer.resolvePath(path)
+			local instance, resolveErr = Serializer.resolvePathOrError(path)
 			if not instance then
 				if strict then
-					error(`Could not resolve path: {path}`)
+					error(resolveErr)
 				end
-				table.insert(failed, { path = path, error = "Could not resolve path" })
+				table.insert(failed, { path = path, error = resolveErr :: string })
 				continue
 			end
 
@@ -310,9 +310,9 @@ local function register(router: any)
 			error("grep_scripts requires a pattern")
 		end
 
-		local root = Serializer.resolvePath(basePath)
+		local root, resolveErr = Serializer.resolvePathOrError(basePath)
 		if not root then
-			error(`Could not resolve base path: {basePath}`)
+			error(resolveErr)
 		end
 
 		local searchPattern: string = if caseSensitive then pattern else string.lower(pattern)

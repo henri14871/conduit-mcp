@@ -169,7 +169,14 @@ function registerWrite(server: McpServer, bridge: Bridge): void {
         "Create new instances or clone existing ones.\n\n" +
         "Actions:\n" +
         "- `new` (default): Create instances with className, parent, name, and properties.\n" +
-        "- `clone`: Clone existing instances to a target parent.",
+        "- `clone`: Clone existing instances to a target parent.\n\n" +
+        "Property format — complex types are auto-detected:\n" +
+        "- UDim2: `[xScale, xOffset, yScale, yOffset]` or `{X: {Scale, Offset}, Y: {Scale, Offset}}`\n" +
+        "- Vector3: `[x, y, z]` or `{X, Y, Z}`\n" +
+        "- Vector2: `[x, y]` or `{X, Y}`\n" +
+        "- Color3: `[R, G, B]` (0-255) or `{R, G, B}`\n" +
+        "- UDim: `[scale, offset]` or `{Scale, Offset}`\n" +
+        "- Enum: `{EnumType: 'Font', Name: 'GothamBold'}` or string 'GothamBold'",
       inputSchema: z.object({
         action: z
           .enum(["new", "clone"])
@@ -255,7 +262,13 @@ function registerWrite(server: McpServer, bridge: Bridge): void {
         "Modify existing instances.\n\n" +
         "Modes:\n" +
         "- `targeted` (default): Per-instance modifications with properties, attributes, tags, name, parent.\n" +
-        "- `bulk`: Set one property to the same value across many instances.",
+        "- `bulk`: Set one property to the same value across many instances.\n\n" +
+        "Property format — complex types are auto-detected from the target property:\n" +
+        "- UDim2: `[xScale, xOffset, yScale, yOffset]` or `{X: {Scale, Offset}, Y: {Scale, Offset}}`\n" +
+        "- Vector3: `[x, y, z]` or `{X, Y, Z}`\n" +
+        "- Vector2: `[x, y]` or `{X, Y}`\n" +
+        "- Color3: `[R, G, B]` (0-255) or `{R, G, B}`\n" +
+        "- UDim: `[scale, offset]` or `{Scale, Offset}`",
       inputSchema: z.object({
         mode: z
           .enum(["targeted", "bulk"])

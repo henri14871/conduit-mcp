@@ -161,9 +161,9 @@ local function register(router: any)
 		local filter: string? = p.filter
 		local includeProperties: boolean = if p.includeProperties then true else false
 
-		local root = Serializer.resolvePath(path)
+		local root, resolveErr = Serializer.resolvePathOrError(path)
 		if not root then
-			error(`Could not resolve path: {path}`)
+			error(resolveErr)
 		end
 
 		local tree = buildTree(root, 0, depth, filter, includeProperties)
@@ -235,9 +235,9 @@ local function register(router: any)
 			error("get_info requires a path")
 		end
 
-		local instance = Serializer.resolvePath(path)
+		local instance, resolveErr = Serializer.resolvePathOrError(path)
 		if not instance then
-			error(`Could not resolve path: {path}`)
+			error(resolveErr)
 		end
 
 		local result: { [string]: any } = {

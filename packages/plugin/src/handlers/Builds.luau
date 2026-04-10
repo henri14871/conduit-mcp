@@ -150,9 +150,9 @@ local function register(router: any)
 			error("export_build requires a path")
 		end
 
-		local instance = Serializer.resolvePath(path)
+		local instance, resolveErr = Serializer.resolvePathOrError(path)
 		if not instance then
-			error(`Could not resolve path: {path}`)
+			error(resolveErr)
 		end
 
 		return deepSerialize(instance)
@@ -172,9 +172,9 @@ local function register(router: any)
 
 		local allowScripts: boolean = if params.allowScripts then true else false
 
-		local targetParent = Serializer.resolvePath(targetParentPath)
+		local targetParent, targetErr = Serializer.resolvePathOrError(targetParentPath)
 		if not targetParent then
-			error(`Could not resolve target parent path: {targetParentPath}`)
+			error(targetErr)
 		end
 
 		local root = deepImport(tree, targetParent, allowScripts)

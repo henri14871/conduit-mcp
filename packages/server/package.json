@@ -1,6 +1,6 @@
 {
   "name": "conduit-mcp",
-  "version": "2.1.1",
+  "version": "2.1.4",
   "description": "WebSocket-first MCP bridge between AI coding assistants and Roblox Studio",
   "type": "module",
   "bin": {
