@@ -1,7 +1,46 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
 *.rbxm
-.DS_Store
-*.log
+
+# Environment & secrets
 .env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor / IDE
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Rojo
 .rojo-port
+
+# TypeScript
+*.tsbuildinfo
+
+# Coverage & testing
+coverage/
+.nyc_output/
+
+# Plans & artifacts
+conduit-plan.md
+compass_artifact_*.md
+
+# Misc
+*.bak
+*.tmp
