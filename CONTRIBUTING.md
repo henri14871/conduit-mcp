@@ -41,6 +41,16 @@ Copy `Conduit.rbxm` to your Roblox Studio plugins folder:
 4. Enable HttpService if prompted (Game Settings > Security > Allow HTTP Requests)
 5. The plugin auto-connects -- you should see `[Conduit] Connected via WebSocket` in the output
 
+## Contributor License Agreement (CLA)
+
+By submitting a pull request, you agree that:
+
+1. Your contributions are your original work (or you have the right to submit them).
+2. You grant Henri Elliott-Knight / Knight & Co Digital a perpetual, worldwide, irrevocable, royalty-free license to use, modify, sublicense, and relicense your contributions under any license, including proprietary licenses.
+3. You understand that your contributions will be licensed under the project's current license (BSL 1.1) and that the Licensor may change the project's license in the future.
+
+This ensures the project can evolve its licensing without needing to track down every past contributor for permission.
+
 ## Pull Requests
 
 - Describe what your PR does and why
