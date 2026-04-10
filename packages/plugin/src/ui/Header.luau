@@ -28,7 +28,7 @@ function Header.new(parent: GuiObject, order: number): Header
 	banner.Position = UDim2.new(0, 0, 0, 0)
 	banner.BackgroundTransparency = 1
 	banner.BorderSizePixel = 0
-	banner.Image = "rbxassetid://103184859459538"
+	banner.Image = "rbxassetid://103653412901492"
 	banner.ScaleType = Enum.ScaleType.Fit
 	banner.Parent = header
 

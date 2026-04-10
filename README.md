@@ -8,26 +8,26 @@
   <a href="https://github.com/henri14871/conduit-mcp"><img src="https://img.shields.io/github/stars/henri14871/conduit-mcp" alt="GitHub stars" /></a>
 </p>
 
-<p align="center"><strong>The first Roblox Studio MCP built on WebSocket not polling.</strong></p>
+MCP server that connects AI assistants to Roblox Studio over WebSocket instead of HTTP polling.
 
 ```
 AI Client <--stdio--> Conduit Server <--WebSocket--> Studio Plugin <--API--> DataModel
 ```
 
-Every other Roblox MCP uses HTTP polling, adding 200-500ms of latency per operation. Conduit holds a persistent WebSocket connection. Commands flow instantly in both directions -- under 50ms round trips.
+Other Roblox MCPs poll over HTTP -- every operation adds 200-500ms of latency and the AI wastes half its context window reading 40+ tool definitions. Conduit holds a persistent WebSocket connection (<50ms round trips) and gives the AI 19 tools that actually map to how you work, not a 1:1 dump of the API.
 
-## Quick Start
+## Get started
 
 ```bash
 npx conduit-mcp --install
 ```
 
-Installs the Studio plugin and prints the config snippet for your AI client. Add `--auto-config` to auto-configure detected clients.
+That installs the Studio plugin and prints the config for your AI client. Pass `--auto-config` to set up Claude/Cursor/Windsurf automatically.
 
 <details>
-<summary>Manual setup</summary>
+<summary>Or set it up manually</summary>
 
-Add to your AI client's MCP config:
+Add this to your AI client's MCP config:
 
 ```json
 {
@@ -40,109 +40,68 @@ Add to your AI client's MCP config:
 }
 ```
 
-Install the plugin from [GitHub releases](https://github.com/henri14871/conduit-mcp/releases) or build from source with Rojo.
-
-**Requires:** Node.js 18+ and Roblox Studio with HttpService enabled.
+Grab the plugin from [releases](https://github.com/henri14871/conduit-mcp/releases) or build it yourself with Rojo. You'll need Node 18+ and HttpService enabled in Studio.
 
 </details>
 
-## Why Fewer Tools Is Better
+## What it can do
 
-Most Roblox MCPs give the AI 40-50+ separate tools -- one per API call. That means the model burns tokens just reading tool definitions, and needs multiple round trips for basic tasks.
-
-Conduit takes the opposite approach: **19 workflow-oriented tools**, each doing the work of 3-5 flat tools. `edit_script` handles full replace, range edits, find/replace, cross-script refactoring, and batch edits with mixed modes in one tool. `read_script` supports full source, line ranges, structural outlines, and batch reads across multiple scripts in a single call. `playtest` covers start/stop, code execution, console output, runtime inspection, character navigation, virtual input, and viewport screenshots. `explore` browses the tree (with automatic collapsing of repetitive children), manages selection, lists services, and reports studio state.
-
-The result: the AI reads fewer tool definitions, makes fewer calls, and spends tokens on your game -- not on MCP overhead.
-
-## How Conduit Compares
-
-|  | **Conduit** | **Roblox Built-in** | **robloxstudio-mcp** | **Weppy** |
-|---|---|---|---|---|
-| **Transport** | WebSocket | Native | HTTP polling | HTTP |
-| **Latency** | <50ms | Native | 200-500ms | 200-500ms |
-| **Tool design** | Workflow (19 tools) | Workflow (16 tools) | 1:1 mapping (39 tools) | Action-based (22 tools, 150+ actions) |
-| **License** | BSL 1.1 | Closed source | MIT | AGPL (Pro = paid) |
-| | | | | |
-| Script range editing | Yes | Yes | Yes | Yes |
-| Script grep/search | Yes | Yes | Yes | Yes |
-| Multi-script refactor | Yes | -- | -- | -- |
-| Batch read (multi-script) | Yes | -- | -- | -- |
-| Batch edit (mixed modes) | Yes | -- | -- | -- |
-| Script outline/skeleton | Yes | -- | -- | -- |
-| Console/log output | Yes | Yes | Yes | Yes |
-| Runtime inspection | Yes | -- | -- | -- |
-| Playtest control | Yes | Yes | Yes | Paid |
-| Virtual input | Yes | Yes | -- | -- |
-| Character navigation | Yes | Yes | -- | -- |
-| Undo/redo | Yes | -- | Yes | -- |
-| Transactional undo | Yes | -- | -- | -- |
-| Multi-Studio | Yes | Yes | -- | 3 places |
-| Terrain tools | Yes | -- | -- | Paid |
-| Asset search/insert | Yes | Yes | Yes | Paid |
-| Attributes & tags | Yes | -- | Yes | Yes |
-| Screenshot | Yes | -- | Yes | -- |
-| | | | | |
-| Filtered property reads | Yes | -- | -- | -- |
-| Tree auto-collapsing | Yes | -- | -- | -- |
-| Token-aware responses | Yes | -- | -- | -- |
-| MCP tool annotations | Yes | -- | -- | -- |
-| Built-in API reference | Yes | -- | -- | -- |
-| Rojo integration | Optional | -- | -- | -- |
-| Open Cloud API | Optional | -- | -- | -- |
-| AI mesh generation | -- | Yes | -- | -- |
-
-**Roblox Built-in** ships with Studio (no install) and can generate meshes/materials, but has no undo, no terrain tools, no attributes, and is closed source. **robloxstudio-mcp** (335 stars) is the community standard but uses HTTP polling and 1:1 tool mapping that bloats context. **Weppy** has the most actions but locks most behind a paid tier with AGPL licensing.
-
-Conduit is the only open-source option with WebSocket transport, workflow-oriented tools, and full debugging capabilities (console output + runtime inspection + transactional undo).
-
-## Tools
-
-| Tool | Description |
+| Tool | What it does |
 |------|-------------|
-| `explore` | Browse instance tree, get/set selection, list services, check studio state |
-| `get_info` | Class, properties, attributes, tags, typed property list — request specific properties by name for lean responses |
-| `query` | Find instances by class/tag/attribute/name, or grep across all scripts |
-| `create` | Create or clone instances (batch) |
-| `modify` | Set properties/attributes/tags per-instance or in bulk |
-| `delete` | Batch-delete instances |
-| `read_script` | Read source with line ranges, structural outlines, or batch-read multiple scripts in one call |
-| `edit_script` | Full replace, range edit, find/replace, multi-script refactor, or batch edit (mixed modes per script) |
-| `execute_lua` | Run arbitrary Luau in Studio (no playtest required) |
-| `playtest` | Start/stop, execute code, get console output, inspect values, navigate character, simulate input, capture screenshots |
-| `environment` | Terrain fill/clear/read, Workspace/Lighting settings |
-| `assets` | Search the Roblox catalog or insert assets by ID |
-| `builds` | Export, import, or list reusable instance trees |
-| `undo_redo` | Undo or redo with count parameter |
-| `transaction` | Group multiple writes into a single Ctrl+Z (configurable timeout, default 120s) |
-| `screenshot` | Capture viewport screenshot |
-| `lookup_api` | Search bundled Roblox API reference (no Studio needed) |
-| `list_studios` | List connected Studio instances |
-| `set_active_studio` | Switch active Studio instance |
+| `explore` | Browse the instance tree, get/set selection, list services, studio state |
+| `get_info` | Properties, attributes, tags -- request specific ones instead of getting all 60+ |
+| `query` | Find instances by class/tag/attribute/name, grep across scripts |
+| `create` | Create or clone instances, supports batching |
+| `modify` | Set properties/attributes/tags, one instance or many |
+| `delete` | Delete instances in bulk |
+| `read_script` | Full source, line ranges, outlines (just function signatures), or batch-read a bunch of scripts at once |
+| `edit_script` | Full replace, range edits, find/replace, cross-script refactors, batch edits with mixed modes |
+| `execute_lua` | Run Luau in Studio directly, no playtest needed |
+| `playtest` | Start/stop, run code, console output, inspect runtime values, move the character, simulate input, screenshots |
+| `environment` | Terrain (fill/clear/read), Workspace and Lighting settings |
+| `assets` | Search the catalog, insert by asset ID |
+| `builds` | Save, load, and list reusable instance trees |
+| `undo_redo` | Undo or redo, with a count |
+| `transaction` | Group a bunch of edits into one Ctrl+Z (timeout up to 300s for long AI sessions) |
+| `screenshot` | Capture the viewport |
+| `lookup_api` | Search the Roblox API reference without needing Studio |
+| `list_studios` | See all connected Studio instances |
+| `set_active_studio` | Switch which Studio the AI is talking to |
 
 <details>
 <summary>Optional modules</summary>
 
-| Module | Flag | Description |
+| Module | Flag | What it adds |
 |--------|------|-------------|
-| Cloud | `--with-cloud` | Roblox Open Cloud API: datastores, messaging, place info |
-| Rojo | `--with-rojo` | Rojo CLI wrapper: sourcemap, build |
+| Cloud | `--with-cloud` | Open Cloud API -- datastores, messaging, place info |
+| Rojo | `--with-rojo` | Rojo CLI wrapper -- sourcemap, build |
 
 </details>
 
-## CLI Options
+## Why fewer tools matters
 
-```
-npx conduit-mcp                    Start the MCP server
-npx conduit-mcp --install          Install plugin + show config
-npx conduit-mcp --mode inspector   Read-only tools only
-npx conduit-mcp --with-cloud       Enable Open Cloud module
-npx conduit-mcp --with-rojo        Enable Rojo module
-npx conduit-mcp --port 3201        Override bridge port
-```
+Most Roblox MCPs expose one tool per API call. 39 tools, 150+ actions, whatever. The problem is the AI has to read all those definitions before it can do anything, and basic tasks take multiple round trips.
+
+Conduit's 19 tools each do the work of several. `edit_script` alone handles full replace, range edits, find/replace, cross-script refactoring, and batch edits. One call instead of five. The AI reads less, calls less, and spends tokens on your actual game.
+
+Script outlines return just function signatures without the full source -- saves a ton of tokens on big scripts. Tree exploration auto-collapses repetitive children (100 MemStorageConnections becomes 3 samples + a count). Property reads can target specific props by name instead of dumping everything.
+
+## How it compares
+
+|  | **Conduit** | **Roblox Built-in** | **robloxstudio-mcp** | **Weppy** |
+|---|---|---|---|---|
+| Transport | WebSocket | Native | HTTP polling | HTTP |
+| Latency | <50ms | Native | 200-500ms | 200-500ms |
+| Tools | 19 (workflow) | 16 (workflow) | 39 (1:1 mapping) | 22 tools, 150+ actions |
+| License | BSL 1.1 | Closed | MIT | AGPL (Pro = paid) |
+
+**Roblox Built-in** ships with Studio and can generate meshes, but no undo, no terrain tools, no attributes, closed source. **robloxstudio-mcp** is the community standard (335 stars) but the HTTP polling and 1:1 tool mapping bloats context fast. **Weppy** has the most actions but locks terrain, playtest, and assets behind a paid tier.
+
+Conduit's the only open-source one with WebSocket, batch operations, runtime inspection, and transactional undo.
 
 ## Multi-Studio
 
-Connect multiple Studio instances simultaneously. With one instance, routing is automatic.
+Multiple Studio instances can connect at once. With one instance it just routes automatically.
 
 ```
 > list_studios
@@ -153,40 +112,49 @@ Connect multiple Studio instances simultaneously. With one instance, routing is 
 Active studio set to def67890 (MyRPGGame).
 ```
 
+## CLI
+
+```
+npx conduit-mcp                    Start the server
+npx conduit-mcp --install          Install plugin + show config
+npx conduit-mcp --mode inspector   Read-only tools only
+npx conduit-mcp --with-cloud       Enable Open Cloud
+npx conduit-mcp --with-rojo        Enable Rojo integration
+npx conduit-mcp --port 3201        Override bridge port
+```
+
 ## Architecture
 
 ```
 packages/
   server/       TypeScript MCP server (npm: conduit-mcp)
     src/
-      tools/    Tool definitions (one file per domain)
+      tools/    One file per tool domain
       modules/  Optional modules (cloud, rojo)
       context/  Bundled Roblox API index
-  plugin/       Roblox Studio plugin (Luau, built with Rojo)
+  plugin/       Luau Studio plugin (built with Rojo)
     src/
       handlers/ One handler per tool domain
 ```
 
-Writes execute serially. Reads run in parallel. Every mutation is a single Ctrl+Z via ChangeHistoryService.
+Writes are serial. Reads run in parallel. Every mutation is a single Ctrl+Z via ChangeHistoryService. Transactions can group multi-edit sessions into one undo point.
 
-**Optimized for AI agents:** Script outlines return function signatures without full source (saving 90%+ tokens on large scripts). Batch reads and batch edits collapse multiple round trips into one call. Tree exploration auto-collapses repetitive same-class children (e.g. 100+ MemStorageConnections become 3 samples + a count). Transactions group multi-edit sessions into a single undo point with configurable timeouts (up to 300s) for long AI workflows. Property reads can target specific properties by name instead of dumping all 60+.
+## Works with
 
-## Compatible Clients
-
-Claude Code, Claude Desktop, Cursor, Windsurf, Codex CLI, Gemini CLI -- any MCP client with stdio transport.
+Claude Code, Claude Desktop, Cursor, Windsurf, Codex CLI, Gemini CLI -- anything that speaks MCP over stdio.
 
 ## Development
 
 ```bash
-pnpm install && pnpm build    # Build
-pnpm dev                      # Watch mode
-pnpm test                     # Run tests
+pnpm install && pnpm build
+pnpm dev                      # watch mode
+pnpm test
 ```
 
 ## Contributing
 
-PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. [Open an issue](https://github.com/henri14871/conduit-mcp/issues) for bugs or feature requests.
+PRs welcome -- see [CONTRIBUTING.md](CONTRIBUTING.md). [Open an issue](https://github.com/henri14871/conduit-mcp/issues) for bugs or feature requests.
 
 ## License
 
-BSL 1.1 -- see [LICENSE](LICENSE) for full terms. Converts to Apache 2.0 on 2030-04-10.
+BSL 1.1 -- see [LICENSE](LICENSE). Converts to Apache 2.0 on 2030-04-10.
