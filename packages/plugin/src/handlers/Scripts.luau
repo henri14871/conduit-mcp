@@ -291,12 +291,14 @@ local function register(router: any)
 				local startLine: number = edit.startLine
 				local startCol: number = edit.startColumn or 1
 				local endLine: number = edit.endLine
-				local endCol: number = edit.endColumn or 1
 				local text: string = edit.text or ""
 
 				local ok, err = pcall(function()
 					ScriptEditorService:UpdateSourceAsync(instance, function(oldSource: string)
 						local lines = oldSource:split("\n")
+
+						-- Default endColumn to end of the endLine (replace full lines)
+						local endCol: number = edit.endColumn or (#lines[endLine] + 1)
 
 						-- Convert line/column to character offset
 						local startOffset = 0
@@ -358,6 +360,21 @@ local function register(router: any)
 					-- Escape pattern special characters for literal matching
 					local escaped = findPattern:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 					newSource = oldSource:gsub(escaped, safeReplace)
+
+					-- If no match found, retry with flexible whitespace matching:
+					-- Normalize both the find pattern and source to handle tab/space mismatches.
+					-- AI models often convert tabs to spaces when crafting find text.
+					if newSource == oldSource then
+						-- Build a pattern that treats runs of whitespace as interchangeable
+						local flexEscaped = findPattern
+							:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1") -- escape specials first
+							:gsub("%s+", "%%s+") -- any whitespace run matches any whitespace
+
+						local flexSource = oldSource:gsub(flexEscaped, safeReplace)
+						if flexSource ~= oldSource then
+							newSource = flexSource
+						end
+					end
 				end
 
 				-- Count replacements by comparing
@@ -368,6 +385,14 @@ local function register(router: any)
 						""
 					)
 					replacements = count
+					-- If exact match didn't work but flex did, recount with flex pattern
+					if replacements == 0 then
+						local flexEscaped = findPattern
+							:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+							:gsub("%s+", "%%s+")
+						local _, flexCount = oldSource:gsub(flexEscaped, "")
+						replacements = flexCount
+					end
 				end
 
 				return newSource

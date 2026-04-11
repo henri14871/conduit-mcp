@@ -207,14 +207,14 @@ function registerWriteTools(server: McpServer, bridge: Bridge): void {
           .array(
             z.object({
               startLine: z.number().int().describe("Start line (1-based)"),
-              startColumn: z.number().int().describe("Start column (1-based)"),
+              startColumn: z.number().int().default(1).describe("Start column (1-based, default: 1)"),
               endLine: z.number().int().describe("End line (1-based)"),
-              endColumn: z.number().int().describe("End column (1-based)"),
+              endColumn: z.number().int().optional().describe("End column (1-based, default: end of line). Omit to replace through end of endLine."),
               text: z.string().describe("Replacement text"),
             }),
           )
           .optional()
-          .describe("Range edits (for 'range' mode)"),
+          .describe("Range edits (for 'range' mode). Edits replace from startLine:startColumn through endLine:endColumn. Omitting endColumn replaces through end of endLine."),
         find: z
           .string()
           .optional()

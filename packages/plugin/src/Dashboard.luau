@@ -111,6 +111,10 @@ function Dashboard.onPortChange(self: Dashboard, callback: (port: number) -> ())
 	self._settings:onPortChange(callback)
 end
 
+function Dashboard.onAutoConnectChange(self: Dashboard, callback: (enabled: boolean) -> ())
+	self._settings:onAutoConnectChange(callback)
+end
+
 -- ── UI Construction ─────────────────────────────────────────────
 
 function Dashboard._buildUI(self: Dashboard)

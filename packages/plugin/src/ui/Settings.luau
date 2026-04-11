@@ -14,6 +14,7 @@ export type Settings = typeof(setmetatable({} :: {
 	_autoConnectIndicator: Frame,
 	_autoConnectBtn: TextButton,
 	_onPortChange: ((port: number) -> ())?,
+	_onAutoConnectChange: ((enabled: boolean) -> ())?,
 	_pluginRef: Plugin,
 	_revertThread: thread?,
 }, Settings))
@@ -173,6 +174,9 @@ function Settings.new(parent: GuiObject, order: number, pluginRef: Plugin): Sett
 		local newVal = not current
 		pluginRef:SetSetting("ConduitAutoConnect", newVal)
 		self:setAutoConnect(newVal)
+		if self._onAutoConnectChange then
+			self._onAutoConnectChange(newVal)
+		end
 	end
 
 	autoBtn.MouseButton1Click:Connect(toggleAutoConnect)
@@ -197,6 +201,10 @@ end
 
 function Settings.onPortChange(self: Settings, callback: (port: number) -> ())
 	self._onPortChange = callback
+end
+
+function Settings.onAutoConnectChange(self: Settings, callback: (enabled: boolean) -> ())
+	self._onAutoConnectChange = callback
 end
 
 return Settings

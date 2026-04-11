@@ -13,27 +13,29 @@ export function register(server: McpServer, bridge: Bridge): void {
       title: "Playtest Control & Virtual Input",
       description:
         "Control Roblox Studio playtesting and simulate user input.\n\n" +
+        "IMPORTANT: Use mode='run' (default) for reliable MCP control during playtest. " +
+        "Run mode keeps the plugin connection stable. Play mode (F5) may briefly drop the connection during transition.\n\n" +
         "Actions:\n" +
-        "- `start`: Begin a playtest session. Defaults to Play mode (F5, full client with player character). Set mode='run' for Run mode (F8, server-only, no player).\n" +
+        "- `start`: Begin a playtest session. Default: Run mode (F8, server-side). Set mode='play' for Play mode (F5, client with player character — connection may briefly drop).\n" +
         "- `stop`: End the current playtest.\n" +
-        "- `execute`: Run Lua code in the running game context.\n" +
+        "- `execute`: Run Lua code in the game context. Works in both edit mode and during playtest.\n" +
         "- `get_output`: Get console/log output from Studio (works in edit mode and during playtest).\n" +
-        "- `inspect`: Evaluate a Luau expression and return the typed result (requires active playtest).\n" +
-        "- `navigate`: Walk the player character to a position using PathfindingService (requires client playtest).\n" +
-        "- `mouse_click`: Simulate a mouse click at screen coordinates.\n" +
-        "- `mouse_move`: Move the virtual mouse to screen coordinates.\n" +
-        "- `key_press`: Press and release a key.\n" +
-        "- `key_down`: Hold a key down.\n" +
-        "- `key_up`: Release a held key.\n" +
-        "- `screenshot`: Capture the viewport during playtest. Useful for seeing the game state visually.",
+        "- `inspect`: Evaluate a Luau expression and return the typed result. Can access Workspace, ServerStorage, Players, etc.\n" +
+        "- `navigate`: Walk a player character to a position using PathfindingService (requires active playtest with a player character).\n" +
+        "- `mouse_click`: Simulate a mouse click at screen coordinates (requires active playtest).\n" +
+        "- `mouse_move`: Move the virtual mouse to screen coordinates (requires active playtest).\n" +
+        "- `key_press`: Press and release a key (requires active playtest).\n" +
+        "- `key_down`: Hold a key down (requires active playtest).\n" +
+        "- `key_up`: Release a held key (requires active playtest).\n" +
+        "- `screenshot`: Capture the viewport. Useful for seeing the game state visually.",
       inputSchema: z.object({
         action: z
           .enum(["start", "stop", "execute", "get_output", "inspect", "navigate", "mouse_click", "mouse_move", "key_press", "key_down", "key_up", "screenshot"])
           .describe("Playtest action"),
         mode: z
           .enum(["play", "run"])
-          .default("play")
-          .describe("Playtest mode: 'play' (F5, full client with player) or 'run' (F8, server-only). Default: play"),
+          .default("run")
+          .describe("Playtest mode: 'run' (F8, default, reliable MCP control) or 'play' (F5, full client with player — connection may briefly drop)"),
         code: z
           .string()
           .optional()
@@ -150,11 +152,12 @@ export function register(server: McpServer, bridge: Bridge): void {
             content: [{ type: "text", text: "navigate action requires either `target` or `targetPath`." }],
           };
         }
+        const navTimeout = (params.timeout ?? 15) * 1000 + 10_000; // navigate timeout + 10s buffer
         const result = (await bridge.send("playtest_navigate", {
           target: params.target,
           targetPath: params.targetPath,
           timeout: params.timeout,
-        })) as {
+        }, navTimeout)) as {
           status: string;
           position?: { x: number; y: number; z: number };
           message?: string;
@@ -245,16 +248,19 @@ export function register(server: McpServer, bridge: Bridge): void {
       }
 
       // Original playtest actions (start/stop/execute)
+      // Execute can run user code that yields (task.wait etc.), give it extra time
+      const playtestTimeout = params.action === "execute" ? 120_000 : undefined;
       const result = (await bridge.send("playtest", {
         action: params.action,
         code: params.code,
         mode: params.mode,
-      })) as {
+      }, playtestTimeout)) as {
         status: string;
         mode?: string;
         message?: string;
         result?: string;
         error?: string;
+        isRunning?: boolean;
         output?: Array<{ message: string; messageType: string }>;
       };
 
@@ -285,6 +291,16 @@ export function register(server: McpServer, bridge: Bridge): void {
             ? lines.join("\n\n")
             : `Execution completed (${result.status})`;
         text = applyTokenBudget(text, undefined);
+      } else if (params.action === "start") {
+        const modeInfo = result.mode ? ` (${result.mode} mode)` : "";
+        const lines: string[] = [`Playtest start${modeInfo}: ${result.status}`];
+        if (result.isRunning) {
+          lines.push("Game is running. You can now use `execute`, `inspect`, `get_output`, and virtual input actions.");
+        }
+        if (result.message) {
+          lines.push(result.message);
+        }
+        text = lines.join("\n");
       } else {
         const modeInfo = result.mode ? ` (${result.mode} mode)` : "";
         const extra = result.message ? `\n${result.message}` : "";

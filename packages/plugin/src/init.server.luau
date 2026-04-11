@@ -158,6 +158,12 @@ dashboard:onPortChange(function(port)
 	dashboard:updateStudioInfo(port, placeName)
 end)
 
+dashboard:onAutoConnectChange(function(enabled)
+	if enabled and not connection:isConnected() then
+		connection:connect()
+	end
+end)
+
 -- ── Toolbar button toggles dashboard visibility ─────────────────
 
 toggleButton.Click:Connect(function()

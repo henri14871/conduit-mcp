@@ -32,7 +32,7 @@ function Header.new(parent: GuiObject, order: number): Header
 	banner.ScaleType = Enum.ScaleType.Fit
 	banner.Parent = header
 
-	-- Credit
+	-- Credit + version
 	Util.label({
 		Name = "Credit",
 		Size = UDim2.new(1, 0, 0, 14),

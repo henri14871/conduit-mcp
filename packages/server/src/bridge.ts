@@ -13,7 +13,7 @@ import {
 } from "./protocol.js";
 import { log } from "./utils/logger.js";
 
-const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 60_000;
 const HEARTBEAT_CHECK_INTERVAL_MS = 5_000;
 const HEARTBEAT_TIMEOUT_MS = 15_000;
 const PING_INTERVAL_MS = 10_000;
@@ -228,6 +228,7 @@ export class Bridge extends EventEmitter {
   async send(
     method: string,
     params: Record<string, unknown>,
+    timeoutMs?: number,
   ): Promise<unknown> {
     const id = generateId();
     const request: BridgeRequest = { id, method, params };
@@ -236,15 +237,17 @@ export class Bridge extends EventEmitter {
     // Resolve which studio to target
     const studio = this.resolveTargetStudio();
 
+    const effectiveTimeout = timeoutMs ?? REQUEST_TIMEOUT_MS;
+
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(
           new Error(
-            `Request ${method} timed out after ${REQUEST_TIMEOUT_MS}ms — is the Conduit plugin running in Roblox Studio?`,
+            `Request ${method} timed out after ${effectiveTimeout}ms — is the Conduit plugin running in Roblox Studio?`,
           ),
         );
-      }, REQUEST_TIMEOUT_MS);
+      }, effectiveTimeout);
 
       this.pendingRequests.set(id, { resolve, reject, timer });
 

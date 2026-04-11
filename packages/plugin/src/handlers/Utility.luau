@@ -39,9 +39,25 @@ local function register(router: any)
 
 	-- ── screenshot ───────────────────────────────────────────────────
 	router:register("screenshot", function(_params: { [string]: any }?)
-		local capturePlugin: any = plugin
+		-- Try StudioService:CaptureScreenshot first (newer API)
+		local capturedViaStudioService = false
+		pcall(function()
+			local StudioService = game:GetService("StudioService")
+			if typeof((StudioService :: any).CaptureScreenshot) == "function" then
+				(StudioService :: any):CaptureScreenshot()
+				capturedViaStudioService = true
+			end
+		end)
 
-		-- Try to capture and return base64 if possible
+		if capturedViaStudioService then
+			return {
+				status = "captured",
+				message = "Screenshot saved to Roblox screenshots folder via StudioService:CaptureScreenshot().",
+			}
+		end
+
+		-- Try plugin:CaptureScreenshot (older API)
+		local capturePlugin: any = plugin
 		if capturePlugin and typeof(capturePlugin.CaptureScreenshot) == "function" then
 			local ok, err = pcall(function()
 				capturePlugin:CaptureScreenshot()
@@ -53,18 +69,16 @@ local function register(router: any)
 				}
 			end
 
-			-- CaptureScreenshot() is side-effect-only in current Roblox API
-			-- It saves to the user's screenshots folder but does not return data.
-			-- Base64 image return requires EditableImage API support.
 			return {
 				status = "captured",
-				message = "Screenshot captured to file via plugin:CaptureScreenshot(). Base64 return requires EditableImage API support (not yet available in plugin context).",
+				message = "Screenshot saved to Roblox screenshots folder via plugin:CaptureScreenshot().",
 			}
 		end
 
+		-- Neither API available — give a helpful message
 		return {
 			status = "unavailable",
-			message = "Screenshot capture is not supported in the current environment. plugin:CaptureScreenshot() is unavailable.",
+			message = "Screenshot capture is not available in this Studio version. Alternative: use playtest execute with code to inspect game state programmatically, or use playtest inspect to evaluate expressions.",
 		}
 	end, false)
 end

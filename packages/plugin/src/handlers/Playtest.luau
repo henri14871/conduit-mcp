@@ -12,10 +12,10 @@ local function register(router: any)
 
 		if action == "start" then
 			if RunService:IsRunning() then
-				return { status = "already_running" }
+				return { status = "already_running", isRunning = true }
 			end
 
-			local mode: string = params.mode or "play"
+			local mode: string = params.mode or "run"
 
 			if mode == "run" then
 				local ok, err = pcall(function()
@@ -24,44 +24,49 @@ local function register(router: any)
 				if not ok then
 					error(`Failed to start Run mode: {err}`)
 				end
-				return { status = "started", mode = "run" }
+				-- Run mode is synchronous — verify it started
+				task.wait(0.2)
+				return {
+					status = "started",
+					mode = "run",
+					isRunning = RunService:IsRunning(),
+				}
 			else
-				-- Play mode (F5) via PluginGuiService or direct plugin method
-				local started = false
-				local usedMode = "play"
-
-				-- Method 1: plugin:OpenScript-style — use ChangeHistoryService to set a
-				-- waypoint then call RunService methods that work from plugin context
+				-- Play mode (F5) — this is unreliable from plugin context because
+				-- ExecutePlayModeAsync transitions the DataModel and can disrupt
+				-- plugin threads. We fire-and-forget and return immediately.
 				local ok, StudioTestService = pcall(function()
 					return game:GetService("StudioTestService")
 				end)
 
 				if ok and StudioTestService then
-					-- Spawn because ExecutePlayModeAsync yields until playtest ends
 					task.spawn(function()
 						pcall(function()
 							(StudioTestService :: any):ExecutePlayModeAsync({})
 						end)
 					end)
-					-- Don't verify — the plugin context shifts when play mode starts,
-					-- making RunService:IsRunning() unreliable from this thread.
-					-- The playtest will start asynchronously.
-					started = true
-					usedMode = "play"
+					return {
+						status = "started",
+						mode = "play",
+						isRunning = false,
+						message = "Play mode initiated — the plugin connection may briefly drop during the transition. Use get_output or inspect to verify the playtest is running.",
+					}
 				end
 
 				-- Fallback to Run mode if StudioTestService is unavailable
-				if not started then
-					local runOk, runErr = pcall(function()
-						RunService:Run()
-					end)
-					if not runOk then
-						error(`Failed to start playtest: {runErr}`)
-					end
-					usedMode = "run"
+				local runOk, runErr = pcall(function()
+					RunService:Run()
+				end)
+				if not runOk then
+					error(`Failed to start playtest: {runErr}`)
 				end
-
-				return { status = "started", mode = usedMode }
+				task.wait(0.2)
+				return {
+					status = "started",
+					mode = "run",
+					isRunning = RunService:IsRunning(),
+					message = "StudioTestService unavailable — started in Run mode instead.",
+				}
 			end
 
 		elseif action == "stop" then
@@ -85,7 +90,13 @@ local function register(router: any)
 				end
 			end
 
-			return { status = "stopped" }
+			-- Brief wait for stop to take effect
+			task.wait(0.2)
+
+			return {
+				status = "stopped",
+				isRunning = RunService:IsRunning(),
+			}
 
 		elseif action == "execute" then
 			local code: string = params.code
@@ -292,11 +303,10 @@ local function register(router: any)
 	end, false) -- Not mutating (simulates user input, doesn't change DataModel)
 
 	-- ── playtest_inspect (runtime expression evaluation) ─────────────
+	-- NOTE: This runs in the plugin (server/edit) context, not the client.
+	-- It can evaluate expressions that access game.Workspace, ServerStorage, etc.
+	-- For client-specific state (LocalPlayer, PlayerGui), use the execute action instead.
 	router:register("playtest_inspect", function(params: { [string]: any })
-		if not RunService:IsRunning() then
-			error("inspect requires an active playtest. Call playtest with action 'start' first.")
-		end
-
 		local expression: string = params.expression
 		if not expression then
 			error("playtest_inspect requires an expression parameter")
@@ -366,28 +376,36 @@ local function register(router: any)
 	end, false)
 
 	-- ── playtest_navigate (pathfinding navigation) ──────────────────
+	-- NOTE: This runs in the plugin context. During play mode, the plugin can
+	-- access Players and characters through the server-side DataModel.
 	router:register("playtest_navigate", function(params: { [string]: any })
 		if not RunService:IsRunning() then
 			error("navigate requires an active playtest. Call playtest with action 'start' first.")
 		end
 
-		local isClient = false
-		pcall(function()
-			isClient = RunService:IsClient()
-		end)
-		if not isClient then
-			error("navigate requires a client-side playtest (RunService:IsClient() must be true)")
-		end
-
+		-- Find the first player's character from the server-side Players service
 		local Players = game:GetService("Players")
-		local localPlayer = Players.LocalPlayer
-		if not localPlayer then
-			error("navigate requires a LocalPlayer — ensure playtest is running in client mode")
+		local player = nil
+		for _, p in Players:GetPlayers() do
+			player = p
+			break
+		end
+		if not player then
+			error("No players found — ensure playtest is running in Play mode (not Run mode)")
 		end
 
-		local character = localPlayer.Character
+		local character = player.Character
 		if not character then
-			error("Player has no character — wait for character to spawn")
+			-- Wait briefly for character to spawn
+			local waitStart = os.clock()
+			while os.clock() - waitStart < 5 do
+				character = player.Character
+				if character then break end
+				task.wait(0.2)
+			end
+			if not character then
+				error("Player has no character — character may not have spawned yet")
+			end
 		end
 
 		local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -491,11 +509,11 @@ local function register(router: any)
 			humanoid:MoveTo(targetPos)
 
 			local arrived = false
-			local connection: RBXScriptConnection? = nil
-			connection = humanoid.MoveToFinished:Connect(function(reached: boolean)
+			local conn: RBXScriptConnection? = nil
+			conn = humanoid.MoveToFinished:Connect(function(_reached: boolean)
 				arrived = true
-				if connection then
-					connection:Disconnect()
+				if conn then
+					conn:Disconnect()
 				end
 			end)
 
@@ -503,8 +521,8 @@ local function register(router: any)
 				task.wait(0.1)
 			end
 
-			if connection then
-				(connection :: any):Disconnect()
+			if conn then
+				(conn :: any):Disconnect()
 			end
 
 			local finalPos = rootPart.Position
