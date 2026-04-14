@@ -68,12 +68,18 @@ export async function startServer(
     );
   });
 
-  const actualPort = await bridge.start();
-  log.info(`Bridge listening on port ${actualPort}`);
-
+  // Connect stdio transport FIRST so the MCP initialize handshake responds
+  // immediately — some clients (e.g. Codex) time out if the server stalls
+  // during startup. The WebSocket bridge binds in parallel; tool calls that
+  // need Studio will wait on the bridge as usual.
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log.info("MCP server connected via stdio");
+
+  bridge
+    .start()
+    .then((actualPort) => log.info(`Bridge listening on port ${actualPort}`))
+    .catch((err) => log.error("Bridge failed to start:", err));
 
   // Graceful shutdown
   let shuttingDown = false;

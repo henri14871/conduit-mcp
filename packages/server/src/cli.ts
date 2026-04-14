@@ -95,7 +95,7 @@ async function install(autoConfig: boolean): Promise<void> {
         writeClientConfig(client);
       } else {
         console.log(`${client.name} — add this to ${client.configPath}:\n`);
-        printConfigSnippet();
+        printConfigSnippet(client);
       }
     }
   }
@@ -150,6 +150,7 @@ interface ClientInfo {
   name: string;
   configPath: string;
   configKey: string;
+  format?: "json" | "toml";
 }
 
 function detectClients(): ClientInfo[] {
@@ -159,6 +160,12 @@ function detectClients(): ClientInfo[] {
       name: "Claude Code",
       configPath: join(home, ".claude", "settings.json"),
       configKey: "mcpServers",
+    },
+    {
+      name: "Codex",
+      configPath: join(home, ".codex", "config.toml"),
+      configKey: "mcp_servers",
+      format: "toml",
     },
     {
       name: "Cursor",
@@ -201,38 +208,98 @@ function detectClients(): ClientInfo[] {
   });
 }
 
-function printConfigSnippet(): void {
-  const snippet = {
-    conduit: {
-      command: "npx",
-      args: ["-y", "conduit-mcp"],
-    },
-  };
-  console.log(JSON.stringify(snippet, null, 2));
+// Codex spawns `command` directly via Node's child_process with no shell,
+// and on Windows that won't find `npx` (it's npx.cmd). Wrap with cmd /c.
+function serverSpec(client: ClientInfo): { command: string; args: string[] } {
+  const isCodex = client.format === "toml";
+  if (isCodex && platform() === "win32") {
+    return { command: "cmd", args: ["/c", "npx", "-y", "conduit-mcp"] };
+  }
+  return { command: "npx", args: ["-y", "conduit-mcp"] };
+}
+
+function printConfigSnippet(client?: ClientInfo): void {
+  const spec = serverSpec(client ?? { name: "", configPath: "", configKey: "" });
+  if (client?.format === "toml") {
+    console.log(renderTomlSection("conduit", spec));
+    return;
+  }
+  console.log(JSON.stringify({ conduit: spec }, null, 2));
 }
 
 function writeClientConfig(client: ClientInfo): void {
   try {
-    let config: Record<string, unknown> = {};
-    if (existsSync(client.configPath)) {
-      config = JSON.parse(readFileSync(client.configPath, "utf-8"));
-    }
-
-    const servers = (config[client.configKey] as Record<string, unknown>) ?? {};
-    servers["conduit"] = {
-      command: "npx",
-      args: ["-y", "conduit-mcp"],
-    };
-    config[client.configKey] = servers;
-
     const dir = dirname(client.configPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
 
-    writeFileSync(client.configPath, JSON.stringify(config, null, 2) + "\n");
+    if (client.format === "toml") {
+      writeTomlConfig(client);
+    } else {
+      writeJsonConfig(client);
+    }
     console.log(`${client.name} — config written to ${client.configPath}`);
   } catch (err) {
     console.log(`${client.name} — failed to write config: ${err}`);
   }
+}
+
+function writeJsonConfig(client: ClientInfo): void {
+  let config: Record<string, unknown> = {};
+  if (existsSync(client.configPath)) {
+    config = JSON.parse(readFileSync(client.configPath, "utf-8"));
+  }
+  const servers = (config[client.configKey] as Record<string, unknown>) ?? {};
+  servers["conduit"] = serverSpec(client);
+  config[client.configKey] = servers;
+  writeFileSync(client.configPath, JSON.stringify(config, null, 2) + "\n");
+}
+
+function writeTomlConfig(client: ClientInfo): void {
+  const spec = serverSpec(client);
+  const section = renderTomlSection(`${client.configKey}.conduit`, spec);
+  const existing = existsSync(client.configPath)
+    ? readFileSync(client.configPath, "utf-8")
+    : "";
+  const header = `[${client.configKey}.conduit]`;
+  const updated = replaceOrAppendTomlSection(existing, header, section);
+  writeFileSync(client.configPath, updated);
+}
+
+function renderTomlSection(
+  header: string,
+  spec: { command: string; args: string[] },
+): string {
+  const argsLiteral = spec.args.map((a) => JSON.stringify(a)).join(", ");
+  return `[${header}]\ncommand = ${JSON.stringify(spec.command)}\nargs = [${argsLiteral}]\n`;
+}
+
+// Replace an existing `[header]` block (up to the next top-level `[` or EOF),
+// or append if absent. Keeps other sections intact without a full TOML parse.
+function replaceOrAppendTomlSection(
+  source: string,
+  header: string,
+  section: string,
+): string {
+  const headerLine = header;
+  const lines = source.split(/\r?\n/);
+  const startIdx = lines.findIndex((l) => l.trim() === headerLine);
+  if (startIdx === -1) {
+    const sep = source.length === 0 || source.endsWith("\n") ? "" : "\n";
+    return source + sep + (source.length ? "\n" : "") + section;
+  }
+  let endIdx = lines.length;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t.startsWith("[") && t.endsWith("]")) {
+      endIdx = i;
+      break;
+    }
+  }
+  const before = lines.slice(0, startIdx).join("\n");
+  const after = lines.slice(endIdx).join("\n");
+  const joiner = before.length && !before.endsWith("\n") ? "\n" : "";
+  const trailing = after.length ? "\n" + after : "";
+  return before + joiner + section + trailing;
 }
