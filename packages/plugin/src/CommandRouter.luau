@@ -1,6 +1,7 @@
 --!strict
 
 local HttpService = game:GetService("HttpService")
+local ScriptEditorService = game:GetService("ScriptEditorService")
 
 local Types = require(script.Parent.Types)
 local UndoManager = require(script.Parent.UndoManager)
@@ -27,7 +28,7 @@ export type CommandRouter = typeof(setmetatable({} :: {
 	_mutatingMethods: { [string]: boolean },
 	_mutationQueue: { { id: string, method: string, params: any, handler: Types.HandlerFn, sessionId: string? } },
 	_isMutationRunning: boolean,
-	_activeTransaction: { id: string, recording: any }?,
+	_activeTransaction: { id: string, recording: any, scriptBackups: { [string]: { instance: LuaSourceContainer, source: string } } }?,
 	_transactionTimeout: thread?,
 	_activityCallbacks: { (entry: ActivityEntry) -> () },
 }, CommandRouter))
@@ -59,12 +60,13 @@ function CommandRouter.new(connection: Connection): CommandRouter
 		local recording = UndoManager.beginTransaction(name)
 		local transactionId = name .. "_" .. tostring(tick())
 
-		self._activeTransaction = { id = transactionId, recording = recording }
+		self._activeTransaction = { id = transactionId, recording = recording, scriptBackups = {} }
 
 		-- Auto-rollback after timeout to prevent dangling recordings
 		self._transactionTimeout = task.delay(timeout, function()
 			if self._activeTransaction and self._activeTransaction.id == transactionId then
 				warn(`[Conduit] Transaction timed out after {timeout}s, auto-rolling back: ` .. name)
+				self:_restoreScriptBackups(self._activeTransaction)
 				pcall(function()
 					UndoManager.rollbackTransaction(self._activeTransaction.recording)
 				end)
@@ -102,6 +104,7 @@ function CommandRouter.new(connection: Connection): CommandRouter
 			self._transactionTimeout = nil
 		end
 
+		self:_restoreScriptBackups(self._activeTransaction)
 		UndoManager.rollbackTransaction(self._activeTransaction.recording)
 		self._activeTransaction = nil
 
@@ -119,6 +122,66 @@ function CommandRouter._fireActivity(self: CommandRouter, entry: ActivityEntry)
 	for _, cb in self._activityCallbacks do
 		task.spawn(cb, entry)
 	end
+end
+
+--[[ Snapshot the current source of `instance` under the active transaction so
+     a rollback can restore it. ScriptEditorService edits bypass ChangeHistoryService,
+     so without this the "cancel recording" path only undoes Instance.new/property sets
+     and leaves script edits applied — callers would end up with references pointing
+     at modules that were rolled back. No-op when no transaction is active or when
+     the same path has already been backed up (first-write wins). ]]
+function CommandRouter.captureScriptBackup(self: CommandRouter, path: string, instance: LuaSourceContainer)
+	local tx = self._activeTransaction
+	if not tx then
+		return
+	end
+	if tx.scriptBackups[path] then
+		return
+	end
+	local ok, source = pcall(function()
+		return ScriptEditorService:GetEditorSource(instance)
+	end)
+	if ok then
+		tx.scriptBackups[path] = { instance = instance, source = source }
+	else
+		warn(`[Conduit] Failed to capture script backup for {path}: {source}`)
+	end
+end
+
+function CommandRouter._restoreScriptBackups(_self: CommandRouter, tx: { scriptBackups: { [string]: { instance: LuaSourceContainer, source: string } } })
+	for path, backup in tx.scriptBackups do
+		local ok, err = pcall(function()
+			ScriptEditorService:UpdateSourceAsync(backup.instance, function(_old)
+				return backup.source
+			end)
+		end)
+		if not ok then
+			warn(`[Conduit] Failed to restore script source for {path}: {err}`)
+		end
+	end
+end
+
+--[[ Clear all in-flight state. Called when the plugin disconnects from the server so
+     that a subsequent reconnect starts clean — any queued mutations or active
+     transaction from the old session would otherwise run against a server that has
+     already forgotten the request IDs, or reference instances that have been GC'd. ]]
+function CommandRouter.reset(self: CommandRouter)
+	if self._transactionTimeout then
+		pcall(task.cancel, self._transactionTimeout)
+		self._transactionTimeout = nil
+	end
+
+	if self._activeTransaction then
+		self:_restoreScriptBackups(self._activeTransaction)
+		pcall(function()
+			UndoManager.rollbackTransaction(self._activeTransaction.recording)
+		end)
+		self._activeTransaction = nil
+	end
+
+	-- Drop queued mutations — we can't send results back since the socket is gone.
+	table.clear(self._mutationQueue)
+	self._isMutationRunning = false
 end
 
 function CommandRouter.register(self: CommandRouter, method: string, handler: Types.HandlerFn, mutating: boolean?)

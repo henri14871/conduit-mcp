@@ -252,6 +252,10 @@ local function register(router: any)
 			error(`Instance at {path} is not a script (got {instance.ClassName})`)
 		end
 
+		-- Snapshot pre-edit source so transaction rollback can restore it.
+		-- ScriptEditorService edits aren't captured by ChangeHistoryService recordings.
+		router:captureScriptBackup(path, instance)
+
 		if mode == "full" then
 			local source: string = params.source
 			if not source then
@@ -443,6 +447,8 @@ local function register(router: any)
 					error(`Instance at {path} is not a script (got {instance.ClassName})`)
 				end
 
+				router:captureScriptBackup(path, instance)
+
 				local replacements = 0
 				-- Escape % in replacement string for literal mode (gsub treats % as special in replacements)
 				local safeReplace = replaceWith:gsub("%%", "%%%%")
@@ -517,6 +523,8 @@ local function register(router: any)
 					error(`Instance at {path} is not a script (got {instance.ClassName})`)
 				end
 
+				router:captureScriptBackup(path, instance)
+
 				-- Full source replacement mode
 				if edit.source ~= nil then
 					local newSource: string = edit.source
@@ -588,14 +596,14 @@ local function register(router: any)
 			error("execute_lua requires a code parameter")
 		end
 
-		-- Capture output during execution
-		-- NOTE: LogService.MessageOut is global — it may capture unrelated messages
-		-- from other threads during execution. This is a known Roblox limitation.
-		-- We mitigate by disconnecting immediately after pcall returns.
+		-- Watchdog timeout (default 10s, capped at 30s). Anything longer risks freezing
+		-- Studio because Luau is cooperative — code that never yields can't be preempted.
+		local timeout: number = math.clamp(tonumber(params.timeout) or 10, 1, 30)
+
 		local LogService = game:GetService("LogService")
 		local outputLines: { { message: string, messageType: string } } = {}
-		local connection: RBXScriptConnection? = nil
 
+		local connection: RBXScriptConnection? = nil
 		connection = LogService.MessageOut:Connect(function(message: string, messageType: Enum.MessageType)
 			table.insert(outputLines, {
 				message = message,
@@ -611,24 +619,53 @@ local function register(router: any)
 			error("Failed to compile Luau code")
 		end
 
-		local ok, result = pcall(loadFn)
+		local done = false
+		local userOk: boolean = false
+		local userResult: any = nil
+		local workerThread: thread? = nil
 
-		-- Disconnect log capture
+		workerThread = task.spawn(function()
+			userOk, userResult = pcall(loadFn)
+			done = true
+		end)
+
+		local deadline = os.clock() + timeout
+		while not done and os.clock() < deadline do
+			task.wait(0.05)
+		end
+
+		if not done then
+			-- Only cancels at the next yield point — a true CPU-bound loop will still
+			-- hold the scheduler, but at least the router won't wait on it forever.
+			if workerThread then
+				pcall(task.cancel, workerThread)
+			end
+			if connection then
+				connection:Disconnect()
+			end
+			return {
+				status = "timeout",
+				error = `execute_lua exceeded {timeout}s timeout; worker thread cancelled`,
+				output = outputLines,
+				timeoutSeconds = timeout,
+			}
+		end
+
 		if connection then
 			connection:Disconnect()
 		end
 
-		if not ok then
+		if not userOk then
 			return {
 				status = "error",
-				error = tostring(result),
+				error = tostring(userResult),
 				output = outputLines,
 			}
 		end
 
 		return {
 			status = "success",
-			result = if result ~= nil then tostring(result) else nil,
+			result = if userResult ~= nil then tostring(userResult) else nil,
 			output = outputLines,
 		}
 	end, true)

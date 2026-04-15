@@ -236,17 +236,14 @@ export class Bridge extends EventEmitter {
 
     // Resolve which studio to target
     const studio = this.resolveTargetStudio();
+    const targetStudioId = this.activeStudioId;
 
     const effectiveTimeout = timeoutMs ?? REQUEST_TIMEOUT_MS;
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
-        reject(
-          new Error(
-            `Request ${method} timed out after ${effectiveTimeout}ms — is the Conduit plugin running in Roblox Studio?`,
-          ),
-        );
+        reject(this.buildTimeoutError(method, effectiveTimeout, targetStudioId));
       }, effectiveTimeout);
 
       this.pendingRequests.set(id, { resolve, reject, timer });
@@ -277,6 +274,60 @@ export class Bridge extends EventEmitter {
         this.flushHttpPollers(studioId);
       }
     });
+  }
+
+  /**
+   * Classify why a request timed out. Without this, three very different failure modes
+   * ("plugin isn't running", "socket is dead", "plugin got the request but its handler
+   * is stuck") all surface as the same generic "timed out" error, so callers can't
+   * decide whether to retry, reconnect, or surface the hang to the user.
+   *
+   * We inspect studio state *at timeout fire time* (not request send time) because
+   * the socket may have died mid-flight.
+   */
+  private buildTimeoutError(
+    method: string,
+    timeoutMs: number,
+    targetStudioId: string | null,
+  ): Error {
+    const base = `Request ${method} timed out after ${timeoutMs}ms`;
+
+    if (!targetStudioId) {
+      const err = new Error(
+        `${base}: no Roblox Studio plugin was connected when the request was dispatched.`,
+      );
+      (err as any).code = "PLUGIN_NOT_CONNECTED";
+      return err;
+    }
+
+    const studio = this.studios.get(targetStudioId);
+    if (!studio || studio.ws.readyState !== WebSocket.OPEN) {
+      const err = new Error(
+        `${base}: the plugin WebSocket for studio "${targetStudioId}" closed before a response arrived.`,
+      );
+      (err as any).code = "PLUGIN_DISCONNECTED";
+      return err;
+    }
+
+    const lastBeat = this.lastHeartbeats.get(targetStudioId);
+    const age = lastBeat !== undefined ? Date.now() - lastBeat : Infinity;
+    if (age > HEARTBEAT_TIMEOUT_MS) {
+      const err = new Error(
+        `${base}: the plugin stopped sending heartbeats (${Math.round(age / 1000)}s ago) — Studio may be frozen.`,
+      );
+      (err as any).code = "PLUGIN_UNRESPONSIVE";
+      return err;
+    }
+
+    // Heartbeats are fresh, socket is open — the plugin itself is alive, but the
+    // specific handler didn't return. Most common cause: user-supplied Lua (execute_lua)
+    // or a long mutation blocking the queue.
+    const err = new Error(
+      `${base}: the plugin is still responsive but the "${method}" handler did not return in time. ` +
+        `This usually means user Lua is running long or the mutation queue is stalled on a prior command.`,
+    );
+    (err as any).code = "HANDLER_TIMEOUT";
+    return err;
   }
 
   // ── Internal helpers ───────────────────────────────────────────

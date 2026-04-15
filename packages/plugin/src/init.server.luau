@@ -121,6 +121,12 @@ connection:onStatusChange(function(status)
 			healthPollThread = nil
 		end
 
+		-- Drop per-session state (mutation queue, active transaction, timeout thread) so
+		-- the next reconnect starts clean. Otherwise handler writes from the old session
+		-- run against a server that has already forgotten their request IDs, and pending
+		-- results are sent over a dead socket.
+		router:reset()
+
 		warn("[Conduit] Disconnected from MCP server")
 	end
 end)
