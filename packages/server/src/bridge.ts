@@ -15,11 +15,19 @@ import { log } from "./utils/logger.js";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const HEARTBEAT_CHECK_INTERVAL_MS = 5_000;
-const HEARTBEAT_TIMEOUT_MS = 15_000;
+// Plugin closes its socket at 15s without an ack; we give it a 5s margin so the
+// plugin always wins the race to detect a stale link. Server-side eviction is
+// the fallback for cases where the plugin is frozen and never closed.
+const HEARTBEAT_TIMEOUT_MS = 20_000;
 const PING_INTERVAL_MS = 10_000;
 const LONG_POLL_TIMEOUT_MS = 25_000;
 const MAX_PORT_RETRIES = 10;
 const REGISTRATION_TIMEOUT_MS = 10_000;
+// First tool call from a fresh MCP client (Codex, Claude Code) often arrives
+// before the plugin has finished its WebSocket handshake. Block briefly so the
+// caller doesn't either hang on the 60s request timeout or get an immediate
+// PLUGIN_NOT_CONNECTED for a connection that's about to come up.
+const FIRST_CONNECT_WAIT_MS = 3_000;
 
 interface StudioConnection {
   ws: WebSocket;
@@ -234,6 +242,16 @@ export class Bridge extends EventEmitter {
     const request: BridgeRequest = { id, method, params };
     const json = JSON.stringify(request);
 
+    // Fail fast (after a brief grace window) when no plugin is running at all.
+    // Without this, callers wait 60s for REQUEST_TIMEOUT before learning the
+    // plugin isn't there — Codex/Claude Code surface that as a hung tool call.
+    if (this.studios.size === 0 && this.httpStudios.size === 0) {
+      await this.waitForFirstStudio(FIRST_CONNECT_WAIT_MS);
+      if (this.studios.size === 0 && this.httpStudios.size === 0) {
+        throw this.buildPluginNotConnectedError(method);
+      }
+    }
+
     // Resolve which studio to target
     const studio = this.resolveTargetStudio();
     const targetStudioId = this.activeStudioId;
@@ -246,7 +264,12 @@ export class Bridge extends EventEmitter {
         reject(this.buildTimeoutError(method, effectiveTimeout, targetStudioId));
       }, effectiveTimeout);
 
-      this.pendingRequests.set(id, { resolve, reject, timer });
+      this.pendingRequests.set(id, {
+        resolve,
+        reject,
+        timer,
+        studioId: targetStudioId,
+      });
 
       if (studio) {
         studio.ws.send(json, (err) => {
@@ -274,6 +297,37 @@ export class Bridge extends EventEmitter {
         this.flushHttpPollers(studioId);
       }
     });
+  }
+
+  // Wait for any studio to register, up to timeoutMs. Resolves immediately if
+  // one is already connected. Used to absorb the startup race between MCP
+  // initialize (instant) and the plugin's WebSocket handshake (~hundreds of ms).
+  private waitForFirstStudio(timeoutMs: number): Promise<void> {
+    if (this.studios.size > 0 || this.httpStudios.size > 0) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.off("studio-connected", onConnect);
+        resolve();
+      }, timeoutMs);
+      const onConnect = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      this.once("studio-connected", onConnect);
+    });
+  }
+
+  private buildPluginNotConnectedError(method: string): Error {
+    const err = new Error(
+      `Cannot ${method}: the Roblox Studio plugin is not connected. ` +
+        `Open Roblox Studio with the Conduit plugin enabled — it auto-connects when ` +
+        `HttpService is allowed (Game Settings → Security → Allow HTTP Requests). ` +
+        `Check the Conduit dashboard in Studio for connection status.`,
+    );
+    (err as any).code = "PLUGIN_NOT_CONNECTED";
+    return err;
   }
 
   /**
@@ -360,6 +414,11 @@ export class Bridge extends EventEmitter {
       studio.ws.terminate();
       this.studios.delete(studioId);
       this.lastHeartbeats.delete(studioId);
+      this.failPendingForStudio(
+        studioId,
+        "PLUGIN_UNRESPONSIVE",
+        `the plugin connection went stale and was evicted before responding`,
+      );
       this.emit("studio-disconnected", studio.info);
       log.info(`Evicted stale studio: ${studioId}`);
     }
@@ -539,6 +598,15 @@ export class Bridge extends EventEmitter {
       if (current && current.ws === ws) {
         this.studios.delete(studioId);
         this.lastHeartbeats.delete(studioId);
+        // Fail any in-flight requests routed to this studio. The plugin clears
+        // its router state on reconnect, so even if the same studioId comes
+        // back, those request IDs are dead. Without this, callers eat the full
+        // 60s REQUEST_TIMEOUT for a reply that can never arrive.
+        this.failPendingForStudio(
+          studioId,
+          "PLUGIN_DISCONNECTED",
+          `the plugin WebSocket closed before a response arrived`,
+        );
         this.emit("studio-disconnected", info);
         log.info(`Studio disconnected: ${studioId}`);
 
@@ -560,6 +628,25 @@ export class Bridge extends EventEmitter {
         }
       }
     });
+  }
+
+  private failPendingForStudio(
+    studioId: string,
+    code: string,
+    reason: string,
+  ): void {
+    for (const [id, pending] of this.pendingRequests) {
+      if (pending.studioId === studioId) {
+        clearTimeout(pending.timer);
+        this.pendingRequests.delete(id);
+        const err = new Error(
+          `Request aborted: ${reason} (studio: ${studioId}). ` +
+            `The plugin should auto-reconnect — please retry.`,
+        );
+        (err as any).code = code;
+        pending.reject(err);
+      }
+    }
   }
 
   private handlePluginMessage(msg: unknown): void {
@@ -608,6 +695,14 @@ export class Bridge extends EventEmitter {
             const info = this.httpStudios.get(studioId)!;
             this.httpStudios.delete(studioId);
             this.lastHeartbeats.delete(studioId);
+            // Drop queued HTTP commands and fail in-flight requests for this
+            // studio so callers don't sit on the 60s timeout.
+            this.httpPendingCommands.delete(studioId);
+            this.failPendingForStudio(
+              studioId,
+              "PLUGIN_UNRESPONSIVE",
+              `the HTTP-fallback plugin stopped polling for ${Math.round(HEARTBEAT_TIMEOUT_MS / 1000)}s`,
+            );
             this.emit("studio-disconnected", info);
             if (this.activeStudioId === studioId) {
               const remaining = this.getStudios();

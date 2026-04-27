@@ -7,13 +7,19 @@ local Types = require(script.Parent.Types)
 type ConnectionStatus = "disconnected" | "connecting" | "connected"
 
 local HEARTBEAT_INTERVAL = 5
-local HEARTBEAT_ACK_TIMEOUT = 10 -- seconds without an ack before considering connection stale
+-- Server marks a studio stale after 20s without a heartbeat. We give up first at
+-- 15s so the plugin re-establishes before the server tears the socket down — that
+-- keeps reconnect ownership on the side that can act, and avoids both ends racing
+-- to close the same connection.
+local HEARTBEAT_ACK_TIMEOUT = 15
 local HEALTH_VERIFY_INTERVAL = 10 -- seconds between HTTP health verification checks
 local MAX_RECONNECT_DELAY = 5
 local HTTP_POLL_INTERVAL = 0.5
 local WS_FAILURE_THRESHOLD = 3
 local PORT_SCAN_RANGE = 10 -- scan basePort .. basePort+10
-local HTTP_FALLBACK_WS_RETRY_INTERVAL = 15 -- try WebSocket again after this many seconds in HTTP mode
+-- After dropping into HTTP fallback, retry WebSocket aggressively so a server
+-- restart is noticed within seconds instead of the previous 15s window.
+local HTTP_FALLBACK_WS_RETRY_INTERVAL = 5
 
 local Connection = {}
 Connection.__index = Connection

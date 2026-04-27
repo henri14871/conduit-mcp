@@ -58,6 +58,11 @@ export interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  // Studio the request was dispatched to (null if queued for HTTP fallback before
+  // any studio was known). Used to fail-fast when that specific studio drops, so
+  // the caller doesn't sit on a 60s timeout waiting for a reply that can never
+  // arrive (the plugin clears its router state on reconnect).
+  studioId: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
