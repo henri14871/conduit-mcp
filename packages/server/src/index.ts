@@ -95,4 +95,18 @@ export async function startServer(
   bridge.on("shutdown", shutdown);
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  // Exit when the MCP client detaches (stdin EOF). Without this, a closed
+  // client leaves an orphaned server squatting on the port with no one to
+  // serve — the reason startup used to evict whatever held the port.
+  let clientAlive = true;
+  const onClientGone = () => {
+    if (!clientAlive) return;
+    clientAlive = false;
+    log.info("MCP client disconnected (stdin closed) — shutting down");
+    void shutdown();
+  };
+  process.stdin.on("end", onClientGone);
+  process.stdin.on("close", onClientGone);
+  bridge.clientAliveCheck = () => clientAlive;
 }

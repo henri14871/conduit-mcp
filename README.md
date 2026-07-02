@@ -103,6 +103,8 @@ Conduit's the only open-source one with WebSocket, batch operations, runtime ins
 
 Multiple Studio instances can connect at once. With one instance it just routes automatically.
 
+The reverse works too: multiple MCP clients (two Claude Code sessions, Claude + Codex, ...) can each run their own Conduit server side by side. Servers bind the next free port in the 3200–3210 range, and the plugin connects to every live server it finds — no more one session killing the other's connection.
+
 ```
 > list_studios
 - abc12345 — MyShooterGame (Place ID: 123456) ← active

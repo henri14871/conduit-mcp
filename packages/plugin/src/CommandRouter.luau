@@ -8,7 +8,9 @@ local UndoManager = require(script.Parent.UndoManager)
 
 type Connection = {
 	onMessage: (self: any, callback: (data: any) -> ()) -> (),
-	send: (self: any, message: string) -> (),
+	-- requestId routes the response back to the server session that issued the
+	-- request (the plugin can be connected to several MCP servers at once).
+	send: (self: any, message: string, requestId: string?) -> (),
 }
 
 local CommandRouter = {}
@@ -295,7 +297,7 @@ function CommandRouter._sendResult(self: CommandRouter, id: string, result: any)
 		return HttpService:JSONEncode(response)
 	end)
 	if ok then
-		self._connection:send(json)
+		self._connection:send(json, id)
 	else
 		warn("[Conduit] Failed to encode result for " .. id .. ": " .. tostring(json))
 		self:_sendError(id, "ENCODE_ERROR", "Failed to encode response")
@@ -314,7 +316,7 @@ function CommandRouter._sendError(self: CommandRouter, id: string, code: string,
 		return HttpService:JSONEncode(response)
 	end)
 	if ok then
-		self._connection:send(json)
+		self._connection:send(json, id)
 	else
 		warn("[Conduit] Failed to encode error for " .. id)
 	end

@@ -24,10 +24,12 @@ const LONG_POLL_TIMEOUT_MS = 25_000;
 const MAX_PORT_RETRIES = 10;
 const REGISTRATION_TIMEOUT_MS = 10_000;
 // First tool call from a fresh MCP client (Codex, Claude Code) often arrives
-// before the plugin has finished its WebSocket handshake. Block briefly so the
-// caller doesn't either hang on the 60s request timeout or get an immediate
-// PLUGIN_NOT_CONNECTED for a connection that's about to come up.
-const FIRST_CONNECT_WAIT_MS = 3_000;
+// before the plugin has connected. The plugin discovers servers by scanning the
+// port range every 5-8s, so a brand-new server instance (e.g. a second Claude
+// session that landed on port+1) can take up to one scan cycle plus a WebSocket
+// handshake to be found. Block briefly so the caller doesn't either hang on the
+// 60s request timeout or get a premature PLUGIN_NOT_CONNECTED.
+const FIRST_CONNECT_WAIT_MS = 10_000;
 
 interface StudioConnection {
   ws: WebSocket;
@@ -57,6 +59,10 @@ export class Bridge extends EventEmitter {
     string,
     Array<{ res: http.ServerResponse; timer: ReturnType<typeof setTimeout> }>
   >();
+
+  // Set by the host process; reports whether the MCP client driving this server
+  // is still attached. Used to refuse /shutdown while we're actively serving.
+  clientAliveCheck: (() => boolean) | null = null;
 
   constructor(private port: number = 3200) {
     super();
@@ -103,8 +109,38 @@ export class Bridge extends EventEmitter {
   // ── Server lifecycle ───────────────────────────────────────────
 
   /**
-   * Try to shut down a stale Conduit instance on the target port.
-   * Returns true if the port was freed (or was already free).
+   * Check whether the process holding a port is a healthy Conduit server.
+   * Returns true only when /health answers with the Conduit signature —
+   * meaning another live MCP session is being served on that port.
+   */
+  private async isLiveConduit(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const req = http.request(
+        { hostname: "127.0.0.1", port, path: "/health", method: "GET", timeout: 2_000 },
+        (res) => {
+          let body = "";
+          res.on("data", (chunk) => (body += chunk));
+          res.on("end", () => {
+            try {
+              resolve(JSON.parse(body)?.status === "ok");
+            } catch {
+              resolve(false);
+            }
+          });
+        },
+      );
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+      req.end();
+    });
+  }
+
+  /**
+   * Try to shut down a wedged Conduit instance on the target port.
+   * Returns true if the shutdown request was accepted.
    */
   private async evictStaleInstance(port: number): Promise<boolean> {
     return new Promise((resolve) => {
@@ -119,7 +155,7 @@ export class Bridge extends EventEmitter {
         (res) => {
           res.resume(); // drain
           // Give the old server a moment to release the port
-          setTimeout(() => resolve(true), 500);
+          setTimeout(() => resolve(res.statusCode === 200), 500);
         },
       );
       req.on("error", () => resolve(false)); // not running or unreachable
@@ -132,23 +168,34 @@ export class Bridge extends EventEmitter {
   }
 
   async start(): Promise<number> {
-    // Kill any stale Conduit instance on our target port before binding
-    await this.evictStaleInstance(this.port);
-
     return new Promise((resolve, reject) => {
       let attempts = 0;
-      const tryPort = (port: number) => {
+      // Never kill a healthy Conduit on the target port — it is serving another
+      // MCP session (a second Claude/Codex window). The plugin connects to every
+      // live port in the scan range, so coexisting on port+1 just works. Eviction
+      // is reserved for ports held by an unresponsive (wedged/orphaned) instance.
+      const tryPort = (port: number, allowEvict: boolean) => {
         const server = http.createServer((req, res) =>
           this.handleHttp(req, res),
         );
 
-        server.once("error", (err: NodeJS.ErrnoException) => {
+        server.once("error", async (err: NodeJS.ErrnoException) => {
           if (err.code === "EADDRINUSE" && attempts < MAX_PORT_RETRIES) {
             attempts++;
-            log.warn(
-              `Port ${port} still in use after eviction — trying ${port + 1}`,
-            );
-            tryPort(port + 1);
+            if (await this.isLiveConduit(port)) {
+              log.info(
+                `Port ${port} is serving another Conduit session — trying ${port + 1}`,
+              );
+              tryPort(port + 1, true);
+              return;
+            }
+            if (allowEvict && (await this.evictStaleInstance(port))) {
+              log.warn(`Evicted unresponsive instance on port ${port} — retrying`);
+              tryPort(port, false);
+              return;
+            }
+            log.warn(`Port ${port} in use — trying ${port + 1}`);
+            tryPort(port + 1, true);
           } else {
             reject(err);
           }
@@ -164,7 +211,7 @@ export class Bridge extends EventEmitter {
         });
       };
 
-      tryPort(this.port);
+      tryPort(this.port, true);
     });
   }
 
@@ -547,10 +594,36 @@ export class Bridge extends EventEmitter {
     this.studios.set(studioId, { ws, info });
     this.lastHeartbeats.set(studioId, Date.now());
 
+    // If this studio was previously on HTTP fallback, upgrade it: release any
+    // parked long-polls and re-dispatch commands that were queued for polling —
+    // otherwise those requests silently rot until their 60s timeout.
+    if (this.httpStudios.has(studioId)) {
+      this.httpStudios.delete(studioId);
+      const waiters = this.httpPollWaiters.get(studioId) ?? [];
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timer);
+        waiter.res.writeHead(204);
+        waiter.res.end();
+      }
+      this.httpPollWaiters.delete(studioId);
+      const queued = this.httpPendingCommands.get(studioId) ?? [];
+      this.httpPendingCommands.delete(studioId);
+      for (const cmd of queued) {
+        ws.send(JSON.stringify(cmd));
+      }
+      if (queued.length > 0) {
+        log.info(
+          `Re-dispatched ${queued.length} queued command(s) over WebSocket for studio ${studioId}`,
+        );
+      }
+    }
+
     // Set up native WebSocket ping/pong for dead connection detection
     (ws as any).isAlive = true;
+    (ws as any).missedPongs = 0;
     ws.on("pong", () => {
       (ws as any).isAlive = true;
+      (ws as any).missedPongs = 0;
     });
 
     // Auto-activate: first studio, or reclaim if this studio was previously active
@@ -681,6 +754,17 @@ export class Bridge extends EventEmitter {
       const now = Date.now();
       for (const [studioId, lastBeat] of this.lastHeartbeats) {
         if (now - lastBeat > HEARTBEAT_TIMEOUT_MS) {
+          // An HTTP-fallback studio parked on a long-poll is alive — it only
+          // "heartbeats" by re-polling, and our long-poll window (25s) outlasts
+          // the heartbeat timeout (20s). Without this, fallback studios get
+          // evicted mid-poll and flap between connected and disconnected.
+          if (
+            !this.studios.has(studioId) &&
+            (this.httpPollWaiters.get(studioId)?.length ?? 0) > 0
+          ) {
+            this.lastHeartbeats.set(studioId, now);
+            continue;
+          }
           const studio = this.studios.get(studioId);
           if (studio) {
             log.warn(
@@ -726,16 +810,32 @@ export class Bridge extends EventEmitter {
     if (this.pingTimer) return; // already running
     this.pingTimer = setInterval(() => {
       for (const [studioId, studio] of this.studios) {
-        const ws = studio.ws;
-        if ((ws as any).isAlive === false) {
-          log.warn(
-            `Ping timeout for studio "${studioId}" — terminating connection`,
-          );
-          ws.terminate();
-          return;
+        const ws = studio.ws as WebSocket & {
+          isAlive?: boolean;
+          missedPongs?: number;
+        };
+        if (ws.isAlive === false) {
+          ws.missedPongs = (ws.missedPongs ?? 0) + 1;
+          // Two strikes before terminating: a single missed pong can just be a
+          // busy Studio, and the app-level heartbeat monitor still backstops
+          // genuinely dead links.
+          if (ws.missedPongs >= 2) {
+            log.warn(
+              `No pong from studio "${studioId}" after ${ws.missedPongs} pings — terminating connection`,
+            );
+            ws.terminate();
+            continue;
+          }
+          log.warn(`Missed pong from studio "${studioId}" — retrying`);
+        } else {
+          ws.missedPongs = 0;
         }
-        (ws as any).isAlive = false;
-        ws.ping();
+        ws.isAlive = false;
+        try {
+          ws.ping();
+        } catch {
+          // socket already closing — heartbeat/close handlers clean up
+        }
       }
     }, PING_INTERVAL_MS);
   }
@@ -779,6 +879,15 @@ export class Bridge extends EventEmitter {
       if (req.headers.origin) {
         res.writeHead(403);
         res.end("Forbidden");
+        return;
+      }
+      // Refuse while our MCP client is still attached — older Conduit versions
+      // blindly POST /shutdown on startup, and honoring it would kill a live
+      // session (the "other Claude window suddenly can't reach Studio" bug).
+      if (this.clientAliveCheck && this.clientAliveCheck()) {
+        log.warn("Refusing shutdown request — MCP client is still attached");
+        res.writeHead(409);
+        res.end("busy");
         return;
       }
       log.info("Received shutdown request from new Conduit instance");
@@ -893,6 +1002,20 @@ export class Bridge extends EventEmitter {
     const waiters = this.httpPollWaiters.get(studioId) ?? [];
     waiters.push({ res, timer });
     this.httpPollWaiters.set(studioId, waiters);
+
+    // If the plugin aborts the poll (reconnect, Studio hiccup), drop the parked
+    // waiter — otherwise the next queued command is written to a dead socket
+    // and silently lost, and the caller eats the full request timeout.
+    res.on("close", () => {
+      if (res.writableEnded) return; // answered normally
+      clearTimeout(timer);
+      const current = this.httpPollWaiters.get(studioId);
+      if (current) {
+        const idx = current.findIndex((w) => w.res === res);
+        if (idx !== -1) current.splice(idx, 1);
+        if (current.length === 0) this.httpPollWaiters.delete(studioId);
+      }
+    });
   }
 
   private handleResult(
@@ -933,10 +1056,17 @@ export class Bridge extends EventEmitter {
 
     while (waiters.length > 0 && queue.length > 0) {
       const waiter = waiters.shift()!;
-      const cmd = queue.shift()!;
       clearTimeout(waiter.timer);
-      waiter.res.writeHead(200, { "Content-Type": "application/json" });
-      waiter.res.end(JSON.stringify(cmd));
+      if (waiter.res.destroyed || waiter.res.writableEnded) {
+        continue; // dead poller — keep the command for a live one
+      }
+      const cmd = queue.shift()!;
+      try {
+        waiter.res.writeHead(200, { "Content-Type": "application/json" });
+        waiter.res.end(JSON.stringify(cmd));
+      } catch {
+        queue.unshift(cmd); // socket died mid-write — requeue
+      }
     }
 
     if (waiters.length === 0) this.httpPollWaiters.delete(studioId);
