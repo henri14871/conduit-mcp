@@ -37,6 +37,7 @@ export interface StudioRegistration {
   studioId: string;
   placeId?: number;
   placeName?: string;
+  version?: string;
 }
 
 // ── Studio metadata ──────────────────────────────────────────────
@@ -45,6 +46,8 @@ export interface StudioInfo {
   placeId?: number;
   placeName?: string;
   connectedAt: number;
+  // Plugin version reported at registration; absent for pre-2.2.1 plugins.
+  pluginVersion?: string;
 }
 
 export type PluginMessage =

@@ -6,6 +6,18 @@ import { applyTokenBudget } from "../utils/formatting.js";
 // Track playtest session start time so get_output can filter stale logs
 let playtestStartedAt: number | null = null;
 
+// Cursor for get_new_errors: timestamp of the newest error/warning already
+// reported, plus the exact entries seen at that timestamp (log timestamps have
+// one-second granularity, so a bare timestamp cursor would either repeat or
+// drop same-second entries at the boundary). Keyed to the active studio —
+// switching studios resets the watch.
+let errorWatchCursor: number | null = null;
+let errorWatchSeenAtCursor = new Set<string>();
+let errorWatchStudioId: string | null = null;
+// Fetch far more from the plugin than we display so an error storm can't push
+// the first occurrence (usually the root cause) past the cursor unreported.
+const ERROR_WATCH_FETCH_LIMIT = 500;
+
 export function register(server: McpServer, bridge: Bridge): void {
   server.registerTool(
     "playtest",
@@ -20,6 +32,7 @@ export function register(server: McpServer, bridge: Bridge): void {
         "- `stop`: End the current playtest.\n" +
         "- `execute`: Run Lua code in the game context. Works in both edit mode and during playtest.\n" +
         "- `get_output`: Get console/log output from Studio (works in edit mode and during playtest).\n" +
+        "- `get_new_errors`: Return only errors/warnings that appeared since the previous get_new_errors call (first call: since playtest start, or recent history). Cheap to poll in edit→test→fix loops.\n" +
         "- `inspect`: Evaluate a Luau expression and return the typed result. Can access Workspace, ServerStorage, Players, etc.\n" +
         "- `navigate`: Walk a player character to a position using PathfindingService (requires active playtest with a player character).\n" +
         "- `mouse_click`: Simulate a mouse click at screen coordinates (requires active playtest).\n" +
@@ -30,7 +43,7 @@ export function register(server: McpServer, bridge: Bridge): void {
         "- `screenshot`: Capture the viewport. Useful for seeing the game state visually.",
       inputSchema: z.object({
         action: z
-          .enum(["start", "stop", "execute", "get_output", "inspect", "navigate", "mouse_click", "mouse_move", "key_press", "key_down", "key_up", "screenshot"])
+          .enum(["start", "stop", "execute", "get_output", "get_new_errors", "inspect", "navigate", "mouse_click", "mouse_move", "key_press", "key_down", "key_up", "screenshot"])
           .describe("Playtest action"),
         mode: z
           .enum(["play", "run"])
@@ -118,6 +131,83 @@ export function register(server: McpServer, bridge: Bridge): void {
           .join("\n");
         const text = `${header}\n\n\`\`\`\n${logText}\n\`\`\``;
 
+        return {
+          content: [{ type: "text", text: applyTokenBudget(text, undefined) }],
+        };
+      }
+
+      // ── get_new_errors ──────────────────────────────────────────
+      if (params.action === "get_new_errors") {
+        // Cursor state belongs to one studio's log stream; reset on switch.
+        const activeStudio = bridge.getActiveStudioId();
+        if (activeStudio !== errorWatchStudioId) {
+          errorWatchStudioId = activeStudio;
+          errorWatchCursor = null;
+          errorWatchSeenAtCursor = new Set();
+        }
+
+        const since = errorWatchCursor ?? playtestStartedAt ?? undefined;
+        const result = (await bridge.send("get_log_output", {
+          messageTypes: ["MessageError", "MessageWarning"],
+          since,
+          limit: ERROR_WATCH_FETCH_LIMIT,
+        })) as {
+          logs: Array<{ message: string; messageType: string; timestamp: number }>;
+          total: number;
+        };
+
+        // The plugin's `since` filter is inclusive — drop entries we already
+        // reported at the cursor timestamp.
+        const keyOf = (l: { message: string; messageType: string }) =>
+          `${l.messageType}|${l.message}`;
+        const fresh = result.logs.filter(
+          (l) =>
+            errorWatchCursor === null ||
+            l.timestamp > errorWatchCursor ||
+            (l.timestamp === errorWatchCursor &&
+              !errorWatchSeenAtCursor.has(keyOf(l))),
+        );
+
+        if (fresh.length > 0) {
+          const maxTs = Math.max(...fresh.map((l) => l.timestamp));
+          if (maxTs !== errorWatchCursor) {
+            errorWatchSeenAtCursor = new Set();
+          }
+          errorWatchCursor = maxTs;
+          for (const l of fresh) {
+            if (l.timestamp === maxTs) {
+              errorWatchSeenAtCursor.add(keyOf(l));
+            }
+          }
+        }
+
+        if (fresh.length === 0) {
+          return {
+            content: [{ type: "text", text: "No new errors or warnings." }],
+          };
+        }
+
+        // Show oldest-first and truncate from the tail: in a repeating-error
+        // storm the first occurrence is the root cause, the rest are echoes.
+        const displayLimit = params.limit ?? 50;
+        const shown = fresh.slice(0, displayLimit);
+        const notes: string[] = [];
+        if (fresh.length > shown.length) {
+          notes.push(
+            `_…${fresh.length - shown.length} newer entries omitted (oldest shown first — the first occurrence is usually the root cause)._`,
+          );
+        }
+        if (result.total > result.logs.length) {
+          notes.push(
+            `_Log buffer overflowed: ${result.total - result.logs.length} entries were dropped before this check._`,
+          );
+        }
+
+        const text =
+          `**New Errors/Warnings** (${fresh.length})\n\n\`\`\`\n` +
+          shown.map((l) => `[${l.messageType}] ${l.message}`).join("\n") +
+          "\n```" +
+          (notes.length > 0 ? `\n${notes.join("\n")}` : "");
         return {
           content: [{ type: "text", text: applyTokenBudget(text, undefined) }],
         };

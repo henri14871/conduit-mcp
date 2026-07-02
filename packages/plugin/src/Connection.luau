@@ -2,6 +2,8 @@
 
 local HttpService = game:GetService("HttpService")
 
+local PLUGIN_VERSION: string = require(script.Parent.Version)
+
 type ConnectionStatus = "disconnected" | "connecting" | "connected"
 
 local HEARTBEAT_INTERVAL = 5
@@ -449,6 +451,15 @@ function Connection._sessionLoop(self: Connection, session: Session)
 			self:_runWebSocket(session)
 		end
 
+		-- The transport ended, so any request that arrived through it can no
+		-- longer be answered (the server failed its in-flight requests when the
+		-- link dropped). Drop their routing entries so they don't accumulate.
+		for id, origin in self._requestOrigins do
+			if origin == session then
+				self._requestOrigins[id] = nil
+			end
+		end
+
 		if not self._shouldRun or not session.alive then
 			break
 		end
@@ -551,6 +562,7 @@ function Connection._runWebSocket(self: Connection, session: Session)
 				studioId = self._studioId,
 				placeId = game.PlaceId,
 				placeName = game.Name or "Unknown",
+				version = PLUGIN_VERSION,
 			}))
 		end)
 		if not regOk then
@@ -662,6 +674,10 @@ function Connection._runWebSocket(self: Connection, session: Session)
 	while not opened and not closed and not isStale() do
 		if os.clock() - waitStart > CONNECT_OPEN_TIMEOUT then
 			warn("[Conduit] WebSocket connection timed out after " .. CONNECT_OPEN_TIMEOUT .. "s on port " .. session.port)
+			-- Invalidate this socket's handlers before abandoning it — its Closed
+			-- event can fire long after we've moved on and must not touch the
+			-- session's next connection attempt.
+			session.generation += 1
 			session.ws = nil
 			pcall(function()
 				ws:Close()
@@ -703,7 +719,11 @@ function Connection._runHttpFallback(self: Connection, session: Session)
 		if self._wsSupported and (os.clock() - session.fallbackStartTime) >= session.fallbackRetryInterval then
 			print("[Conduit] Attempting WebSocket upgrade on port " .. session.port)
 			session.useHttpFallback = false
-			session.wsFailureCount = 0
+			-- One strike only for upgrade probes: while we're attempting WS the
+			-- server sees no polls, and its 20s heartbeat timeout is shorter than
+			-- three failed attempts (3 × 10s open-timeout + backoff). A single
+			-- failure drops straight back to HTTP before we get evicted.
+			session.wsFailureCount = WS_FAILURE_THRESHOLD - 1
 			session.fallbackRetryInterval =
 				math.min(session.fallbackRetryInterval * 2, HTTP_FALLBACK_WS_RETRY_MAX)
 			session.skipBackoff = true
@@ -715,12 +735,13 @@ function Connection._runHttpFallback(self: Connection, session: Session)
 		local pollOk, response = pcall(function()
 			return HttpService:RequestAsync({
 				Url = string.format(
-					"http://%s:%d/poll?studioId=%s&placeId=%s&placeName=%s",
+					"http://%s:%d/poll?studioId=%s&placeId=%s&placeName=%s&version=%s",
 					HOST,
 					session.port,
 					self._studioId,
 					tostring(game.PlaceId),
-					HttpService:UrlEncode(game.Name or "Unknown")
+					HttpService:UrlEncode(game.Name or "Unknown"),
+					HttpService:UrlEncode(PLUGIN_VERSION)
 				),
 				Method = "GET",
 			})

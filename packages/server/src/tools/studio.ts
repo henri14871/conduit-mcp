@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Bridge } from "../bridge.js";
+import { getServerVersion } from "../utils/version.js";
 
 export function register(server: McpServer, bridge: Bridge): void {
   server.registerTool(
@@ -32,12 +33,19 @@ export function register(server: McpServer, bridge: Bridge): void {
         };
       }
 
+      const serverVersion = getServerVersion();
       const lines = studios.map((s) => {
         const active = s.studioId === activeId ? " **← active**" : "";
         const place = s.placeName ? ` — ${s.placeName}` : "";
         const placeId = s.placeId ? ` (Place ID: ${s.placeId})` : "";
         const duration = Math.floor((Date.now() - s.connectedAt) / 1000);
-        return `- \`${s.studioId}\`${place}${placeId} — connected ${duration}s ago${active}`;
+        const version =
+          s.pluginVersion &&
+          serverVersion !== "unknown" &&
+          s.pluginVersion !== serverVersion
+            ? ` ⚠ plugin v${s.pluginVersion} ≠ server v${serverVersion} — user should run \`npx conduit-mcp --install\` and restart Studio`
+            : "";
+        return `- \`${s.studioId}\`${place}${placeId} — connected ${duration}s ago${active}${version}`;
       });
 
       const text = `**Connected Studios (${studios.length}):**\n${lines.join("\n")}`;

@@ -24,10 +24,10 @@ usage() {
   echo "Usage: ./scripts/publish.sh [command] [options]"
   echo ""
   echo "Commands:"
-  echo "  plugin          Build plugin and copy to Roblox Plugins"
-  echo "  server [bump]   Build, bump version, and publish to npm"
+  echo "  plugin          Sync version, build plugin, copy to Roblox Plugins"
+  echo "  server [bump]   Bump version, rebuild plugin, publish server to npm"
   echo "                  bump: patch (default), minor, major"
-  echo "  all [bump]      Do both plugin and server"
+  echo "  all [bump]      Same as server (plugin ships inside the npm package)"
   echo ""
   echo "Options:"
   echo "  --dry-run       Show what would happen without doing it"
@@ -51,7 +51,40 @@ done
 COMMAND="${ARGS[0]:-}"
 BUMP="${ARGS[1]:-patch}"
 
+# Keep the plugin's reported version in lockstep with the server package —
+# the server warns users when a connected plugin's version doesn't match.
+sync_plugin_version() {
+  local version
+  version=$(cd "$SERVER_DIR" && node -p "require('./package.json').version")
+  cat > "$PLUGIN_DIR/src/Version.luau" <<EOF
+--!strict
+-- Auto-synced from packages/server/package.json by scripts/publish.sh — do not edit manually.
+return "$version"
+EOF
+  echo -e "${GREEN}[plugin]${NC} Version.luau → $version"
+}
+
+bump_version() {
+  local bump="${1:-patch}"
+  cd "$SERVER_DIR"
+  if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}[server]${NC} DRY RUN - would bump $bump"
+    return
+  fi
+  npm version "$bump" --no-git-tag-version
+  local new_version
+  new_version=$(node -p "require('./package.json').version")
+  echo -e "${GREEN}[server]${NC} Version → $new_version"
+}
+
 publish_plugin() {
+  if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}[plugin]${NC} DRY RUN - would sync Version.luau, build with Rojo, and install to $ROBLOX_PLUGINS"
+    return
+  fi
+
+  sync_plugin_version
+
   echo -e "${CYAN}[plugin]${NC} Building with Rojo..."
 
   rojo build "$PLUGIN_DIR" --output "$SERVER_DIR/plugin/Conduit.rbxm"
@@ -73,8 +106,6 @@ publish_plugin() {
 }
 
 publish_server() {
-  local bump="${1:-patch}"
-
   # Run tests first
   if [ "$SKIP_TESTS" = false ]; then
     echo -e "${CYAN}[server]${NC} Running tests..."
@@ -89,18 +120,11 @@ publish_server() {
   pnpm build
   echo -e "${GREEN}[server]${NC} Built!"
 
-  # Version bump
-  echo -e "${CYAN}[server]${NC} Bumping version ($bump)..."
   if [ "$DRY_RUN" = true ]; then
-    echo -e "${YELLOW}[server]${NC} DRY RUN - would bump $bump and publish"
-    npm version "$bump" --no-git-tag-version --dry-run 2>/dev/null || true
+    echo -e "${YELLOW}[server]${NC} DRY RUN - would publish"
     npm publish --dry-run
   else
-    npm version "$bump" --no-git-tag-version
     NEW_VERSION=$(node -p "require('./package.json').version")
-    echo -e "${GREEN}[server]${NC} Version → $NEW_VERSION"
-
-    # Publish
     echo -e "${CYAN}[server]${NC} Publishing to npm..."
     if [ -n "$NPM_TOKEN" ]; then
       npm publish --//registry.npmjs.org/:_authToken="$NPM_TOKEN"
@@ -112,17 +136,18 @@ publish_server() {
   fi
 }
 
+# Bump FIRST so the plugin build embeds the same version the server publishes
+# with — the plugin ships inside the npm tarball and reports its version to
+# the server at registration.
 case "$COMMAND" in
   plugin)
     publish_plugin
     ;;
-  server)
-    publish_server "$BUMP"
-    ;;
-  all)
+  server|all)
+    bump_version "$BUMP"
     publish_plugin
     echo ""
-    publish_server "$BUMP"
+    publish_server
     echo ""
     echo -e "${GREEN}All done!${NC}"
     ;;

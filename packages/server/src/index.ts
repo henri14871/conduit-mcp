@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { Bridge } from "./bridge.js";
 import { registerAllTools, type ToolRegistrationOptions } from "./tools/index.js";
 import { log } from "./utils/logger.js";
+import { getServerVersion } from "./utils/version.js";
 import type { StudioInfo } from "./protocol.js";
 
 export interface ServerOptions {
@@ -20,7 +21,7 @@ export async function startServer(
   const server = new McpServer(
     {
       name: "conduit-mcp",
-      version: "2.0.0",
+      version: getServerVersion(),
     },
     {
       instructions: [
@@ -87,6 +88,10 @@ export async function startServer(
     if (shuttingDown) return;
     shuttingDown = true;
     log.info("Shutting down...");
+    // Watchdog: bridge.stop() can stall on open keep-alive connections (an
+    // HTTP-fallback plugin re-polling during close). A wedged shutdown means
+    // an orphaned process squatting on the port — exit hard rather than risk it.
+    setTimeout(() => process.exit(1), 5_000).unref();
     await bridge.stop();
     await server.close();
     process.exit(0);

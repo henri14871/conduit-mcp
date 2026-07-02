@@ -12,6 +12,7 @@ import {
   isBridgeResponse,
 } from "./protocol.js";
 import { log } from "./utils/logger.js";
+import { getServerVersion } from "./utils/version.js";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 const HEARTBEAT_CHECK_INTERVAL_MS = 5_000;
@@ -323,11 +324,15 @@ export class Bridge extends EventEmitter {
           if (err) {
             clearTimeout(timer);
             this.pendingRequests.delete(id);
+            // Evict the studio this request was SENT to — activeStudioId may
+            // already point at a different (healthy) studio by the time this
+            // error callback fires, e.g. when the close handler auto-switched.
             log.warn(
-              `WebSocket send failed for studio "${this.activeStudioId}": ${err.message}`,
+              `WebSocket send failed for studio "${targetStudioId}": ${err.message}`,
             );
-            // Evict the broken connection so the next call doesn't repeat this
-            this.evictStaleStudio(this.activeStudioId!);
+            if (targetStudioId) {
+              this.evictStaleStudio(targetStudioId);
+            }
             reject(
               new Error(
                 `Failed to send to Roblox Studio: ${err.message}. The plugin connection may have dropped — it should auto-reconnect shortly. Please retry.`,
@@ -538,6 +543,7 @@ export class Bridge extends EventEmitter {
             placeId: msg.placeId,
             placeName: msg.placeName,
             connectedAt: Date.now(),
+            pluginVersion: msg.version,
           });
           return;
         }
@@ -636,6 +642,7 @@ export class Bridge extends EventEmitter {
       `Studio registered: ${studioId}` +
         (info.placeName ? ` (${info.placeName})` : ""),
     );
+    this.warnOnVersionMismatch(info);
 
     this.startHeartbeatMonitor();
     this.startPingInterval();
@@ -701,6 +708,20 @@ export class Bridge extends EventEmitter {
         }
       }
     });
+  }
+
+  private warnOnVersionMismatch(info: StudioInfo): void {
+    const serverVersion = getServerVersion();
+    if (
+      info.pluginVersion &&
+      serverVersion !== "unknown" &&
+      info.pluginVersion !== serverVersion
+    ) {
+      log.warn(
+        `Plugin version ${info.pluginVersion} does not match server ${serverVersion} — ` +
+          `run "npx conduit-mcp --install" and restart Studio to update the plugin`,
+      );
+    }
   }
 
   private failPendingForStudio(
@@ -907,6 +928,7 @@ export class Bridge extends EventEmitter {
           status: "ok",
           connected: this.isConnected,
           port: this.actualPort,
+          serverVersion: getServerVersion(),
           studios: this.getStudios(),
           activeStudioId: this.activeStudioId,
         }),
@@ -919,7 +941,11 @@ export class Bridge extends EventEmitter {
         parsedUrl.searchParams.get("studioId") ??
         this.activeStudioId ??
         "_default";
-      this.handlePoll(studioId, res);
+      this.handlePoll(
+        studioId,
+        parsedUrl.searchParams.get("version") ?? undefined,
+        res,
+      );
       return;
     }
 
@@ -938,18 +964,24 @@ export class Bridge extends EventEmitter {
     res.end("Not found");
   }
 
-  private handlePoll(studioId: string, res: http.ServerResponse): void {
+  private handlePoll(
+    studioId: string,
+    pluginVersion: string | undefined,
+    res: http.ServerResponse,
+  ): void {
     // Register this studio via HTTP if not already known
     if (!this.studios.has(studioId) && studioId !== "_default") {
       if (!this.httpStudios.has(studioId)) {
         const info: StudioInfo = {
           studioId,
           connectedAt: Date.now(),
+          pluginVersion,
         };
         this.httpStudios.set(studioId, info);
         this.lastHeartbeats.set(studioId, Date.now());
         this.emit("studio-connected", info);
         log.info(`HTTP-only studio registered: ${studioId}`);
+        this.warnOnVersionMismatch(info);
         this.startHeartbeatMonitor();
       }
       this.lastHeartbeats.set(studioId, Date.now());

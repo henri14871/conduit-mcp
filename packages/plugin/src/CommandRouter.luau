@@ -30,6 +30,10 @@ export type CommandRouter = typeof(setmetatable({} :: {
 	_mutatingMethods: { [string]: boolean },
 	_mutationQueue: { { id: string, method: string, params: any, handler: Types.HandlerFn, sessionId: string? } },
 	_isMutationRunning: boolean,
+	-- Bumped by reset(). A mutation worker that outlives a reset must not
+	-- unlock the queue or pop the next item when it finally finishes — the
+	-- queue it started under no longer exists.
+	_queueGeneration: number,
 	_activeTransaction: { id: string, recording: any, scriptBackups: { [string]: { instance: LuaSourceContainer, source: string } } }?,
 	_transactionTimeout: thread?,
 	_activityCallbacks: { (entry: ActivityEntry) -> () },
@@ -42,6 +46,7 @@ function CommandRouter.new(connection: Connection): CommandRouter
 		_mutatingMethods = {},
 		_mutationQueue = {},
 		_isMutationRunning = false,
+		_queueGeneration = 0,
 		_activeTransaction = nil,
 		_transactionTimeout = nil,
 		_activityCallbacks = {},
@@ -182,7 +187,14 @@ function CommandRouter.reset(self: CommandRouter)
 	end
 
 	-- Drop queued mutations — we can't send results back since the socket is gone.
+	-- Bumping the generation orphans any still-running mutation worker: when it
+	-- finishes it must not unlock the queue again (that re-unlock allowed a new
+	-- mutation to start concurrently with it after a reconnect). If a worker IS
+	-- running right now, its ChangeHistoryService recording is still open, so a
+	-- mutation queued after this reset fails to acquire the recording lock and
+	-- errors cleanly instead of interleaving with the orphan.
 	table.clear(self._mutationQueue)
+	self._queueGeneration += 1
 	self._isMutationRunning = false
 end
 
@@ -249,6 +261,7 @@ function CommandRouter._processMutationQueue(self: CommandRouter)
 	end
 
 	self._isMutationRunning = true
+	local generation = self._queueGeneration
 
 	task.spawn(function()
 		local ok, result
@@ -283,8 +296,11 @@ function CommandRouter._processMutationQueue(self: CommandRouter)
 			self:_sendError(item.id, "HANDLER_ERROR", tostring(result))
 		end
 
-		self._isMutationRunning = false
-		self:_processMutationQueue()
+		-- Only unlock the queue we started under; see reset().
+		if self._queueGeneration == generation then
+			self._isMutationRunning = false
+			self:_processMutationQueue()
+		end
 	end)
 end
 
