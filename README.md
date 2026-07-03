@@ -14,7 +14,7 @@ MCP server that connects AI assistants to Roblox Studio over WebSocket instead o
 AI Client <--stdio--> Conduit Server <--WebSocket--> Studio Plugin <--API--> DataModel
 ```
 
-Other Roblox MCPs poll over HTTP -- every operation adds 200-500ms of latency and the AI wastes half its context window reading 40+ tool definitions. Conduit holds a persistent WebSocket connection (<50ms round trips) and gives the AI 19 tools that actually map to how you work, not a 1:1 dump of the API.
+Most Roblox MCPs poll over HTTP. Every operation eats 200-500ms, and the model has to read 40+ tool definitions before it can do anything. Conduit keeps one WebSocket open (under 50ms per round trip) and ships 19 tools shaped around how you edit a game rather than mirroring the API endpoint-for-endpoint.
 
 ## Get started
 
@@ -24,7 +24,7 @@ npx conduit-mcp --install
 
 That installs the Studio plugin and prints the config for your AI client. Pass `--auto-config` to set up Claude/Cursor/Windsurf automatically.
 
-Prefer one click? Get the plugin from the [**Roblox Creator Store**](https://create.roblox.com/store/asset/73971021844128/Conduit-MCP) instead — updates then arrive through Studio's own plugin manager.
+The plugin is also on the [Roblox Creator Store](https://create.roblox.com/store/asset/73971021844128/Conduit-MCP) if you'd rather install it from inside Studio and let the plugin manager handle updates.
 
 <details>
 <summary>Or set it up manually</summary>
@@ -51,7 +51,7 @@ Grab the plugin from the [Roblox Creator Store](https://create.roblox.com/store/
 | Tool | What it does |
 |------|-------------|
 | `explore` | Browse the instance tree, get/set selection, list services, studio state |
-| `get_info` | Properties, attributes, tags -- request specific ones instead of getting all 60+ |
+| `get_info` | Properties, attributes, tags. Ask for specific ones instead of all 60+ |
 | `query` | Find instances by class/tag/attribute/name, grep across scripts |
 | `create` | Create or clone instances, supports batching |
 | `modify` | Set properties/attributes/tags, one instance or many |
@@ -75,8 +75,8 @@ Grab the plugin from the [Roblox Creator Store](https://create.roblox.com/store/
 
 | Module | Flag | What it adds |
 |--------|------|-------------|
-| Cloud | `--with-cloud` | Open Cloud API -- datastores, messaging, place info |
-| Rojo | `--with-rojo` | Rojo CLI wrapper -- sourcemap, build |
+| Cloud | `--with-cloud` | Open Cloud API: datastores, messaging, place info |
+| Rojo | `--with-rojo` | Rojo CLI wrapper (sourcemap, build) |
 
 </details>
 
@@ -84,9 +84,9 @@ Grab the plugin from the [Roblox Creator Store](https://create.roblox.com/store/
 
 Most Roblox MCPs expose one tool per API call. 39 tools, 150+ actions, whatever. The problem is the AI has to read all those definitions before it can do anything, and basic tasks take multiple round trips.
 
-Conduit's 19 tools each do the work of several. `edit_script` alone handles full replace, range edits, find/replace, cross-script refactoring, and batch edits. One call instead of five. The AI reads less, calls less, and spends tokens on your actual game.
+Conduit's 19 tools each cover what would be several tools elsewhere. `edit_script` alone handles full replaces, range edits, find/replace, cross-script refactors, and batch edits. One call instead of five, and the context window goes to your game instead of tool schemas.
 
-Script outlines return just function signatures without the full source -- saves a ton of tokens on big scripts. Tree exploration auto-collapses repetitive children (100 MemStorageConnections becomes 3 samples + a count). Property reads can target specific props by name instead of dumping everything.
+There's more token-saving under the hood. Script outlines return function signatures without the source, which matters a lot on big scripts. Tree exploration collapses repetitive children, so 100 MemStorageConnections come back as 3 samples and a count. Property reads can name the props they want instead of dumping everything.
 
 ## How it compares
 
@@ -97,7 +97,7 @@ Script outlines return just function signatures without the full source -- saves
 | Tools | 19 (workflow) | 16 (workflow) | 39 (1:1 mapping) | 22 tools, 150+ actions |
 | License | BSL 1.1 | Closed | MIT | AGPL (Pro = paid) |
 
-**Roblox Built-in** ships with Studio and can generate meshes, but no undo, no terrain tools, no attributes, closed source. **robloxstudio-mcp** is the community standard (335 stars) but the HTTP polling and 1:1 tool mapping bloats context fast. **Weppy** has the most actions but locks terrain, playtest, and assets behind a paid tier.
+**Roblox Built-in** ships with Studio and can generate meshes, but there's no undo, no terrain tools, no attributes, and it's closed source. **robloxstudio-mcp** was the community standard (335 stars) until it was archived in mid-2026; the maintained forks keep the HTTP polling and 1:1 tool mapping that bloat context fast. **Weppy** has the most actions but locks terrain, playtest, and assets behind a paid tier.
 
 Conduit's the only open-source one with WebSocket, batch operations, runtime inspection, and transactional undo.
 
@@ -105,7 +105,7 @@ Conduit's the only open-source one with WebSocket, batch operations, runtime ins
 
 Multiple Studio instances can connect at once. With one instance it just routes automatically.
 
-The reverse works too: multiple MCP clients (two Claude Code sessions, Claude + Codex, ...) can each run their own Conduit server side by side. Servers bind the next free port in the 3200–3210 range, and the plugin connects to every live server it finds — no more one session killing the other's connection.
+It works the other way around too. Two Claude Code sessions, or Claude and Codex, can each run their own Conduit server at the same time. Servers take the next free port in the 3200-3210 range and the plugin connects to every live server it finds, so one session can no longer kill another's connection.
 
 ```
 > list_studios
@@ -141,11 +141,11 @@ packages/
       handlers/ One handler per tool domain
 ```
 
-Writes are serial. Reads run in parallel. Every mutation is a single Ctrl+Z via ChangeHistoryService. Transactions can group multi-edit sessions into one undo point.
+Writes run serially, reads run in parallel. Every mutation lands as a single Ctrl+Z via ChangeHistoryService, and transactions can group a long multi-edit session into one undo point.
 
 ## Works with
 
-Claude Code, Claude Desktop, Cursor, Windsurf, Codex CLI, Gemini CLI -- anything that speaks MCP over stdio.
+Claude Code, Claude Desktop, Cursor, Windsurf, Codex CLI, Gemini CLI, and anything else that speaks MCP over stdio.
 
 ## Development
 
@@ -157,8 +157,8 @@ pnpm test
 
 ## Contributing
 
-PRs welcome -- see [CONTRIBUTING.md](CONTRIBUTING.md). [Open an issue](https://github.com/henri14871/conduit-mcp/issues) for bugs or feature requests.
+PRs welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). [Open an issue](https://github.com/henri14871/conduit-mcp/issues) for bugs or feature requests.
 
 ## License
 
-BSL 1.1 -- see [LICENSE](LICENSE). Converts to Apache 2.0 on 2030-04-10.
+BSL 1.1 (see [LICENSE](LICENSE)). Converts to Apache 2.0 on 2030-04-10.
