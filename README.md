@@ -24,6 +24,8 @@ npx conduit-mcp --install
 
 That installs the Studio plugin and prints the config for your AI client. Pass `--auto-config` to set up Claude/Cursor/Windsurf automatically.
 
+Prefer one click? Get the plugin from the [**Roblox Creator Store**](https://create.roblox.com/store/asset/73971021844128/Conduit-MCP) instead — updates then arrive through Studio's own plugin manager.
+
 <details>
 <summary>Or set it up manually</summary>
 
